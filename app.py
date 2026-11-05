@@ -30,7 +30,7 @@ except ImportError:
 from sklearn.model_selection import train_test_split
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, OrdinalEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, OrdinalEncoder, LabelEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, f1_score
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
@@ -62,10 +62,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="main-header">⚡ Kurumsal Otomatik Veri Bilimi Platformu</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Modern interaktif grafikler, toplu skorlama, gelişmiş Voting ve SHAP açıklanabilirliği.</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Modern interaktif grafikler, toplu skorlama, gelişmiş Voting ve kusursuz veri ön işleme.</p>', unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. ÖZEL ÖZELLİK MÜHENDİSLİĞİ
+# 1. KUSURSUZ ÖZEL ÖZELLİK MÜHENDİSLİĞİ (Custom Transformer)
 # ==============================================================================
 class HRFeatureEngineer(BaseEstimator, TransformerMixin):
     def __init__(self, ordinal_mappings=None):
@@ -172,9 +172,12 @@ if uploaded_file is not None:
         st.error(f"Hata: '{target_col}' sütunu veri setinde bulunamadı!")
     else:
         X = df_clean.drop(columns=[target_col])
-        y = df_clean[target_col]
-        if y.dtype == 'object':
-            y = y.astype('category').cat.codes
+        y_raw = df_clean[target_col]
+        
+        # --- KUSURSUZ HEDEF DEĞİŞKEN (TARGET) DÖNÜŞÜMÜ ---
+        le = LabelEncoder()
+        y = pd.Series(le.fit_transform(y_raw.astype(str)), index=y_raw.index)
+        st.sidebar.info(f"Sınıf Eşleşmeleri: {dict(zip(le.classes_, range(len(le.classes_))))}")
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
         
@@ -205,7 +208,7 @@ if uploaded_file is not None:
             col1, col2 = st.columns(2)
             with col1:
                 st.write("**Hedef Değişken Sınıf Oranları:**")
-                val_counts = y.value_counts().reset_index()
+                val_counts = y_raw.value_counts().reset_index()
                 val_counts.columns = ['Sınıf', 'Adet']
                 fig_pie = px.pie(val_counts, names='Sınıf', values='Adet', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig_pie, use_container_width=True)
