@@ -65,7 +65,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="main-header">🔬 10 Bölümlü Kontrollü Veri Bilimi ve İstatistiksel Denetim Platformu</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Önce veri setinizi yükleyin ve düzenleyin, ardından 10 aşamalı modüler analiz sürecini yönetin.</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Önce veri setinizi yükleyin, sütun adlarını ve tiplerini düzenleyin, ardından 10 aşamalı analizi yönetin.</p>', unsafe_allow_html=True)
 
 # ==============================================================================
 # ÖZEL ÖZELLİK MÜHENDİSLİĞİ (Scikit-Learn Uyumlu Transformer)
@@ -136,14 +136,14 @@ if not data_loaded and "Bölüm 2" not in current_section:
     current_section = "Bölüm 2: Veriyi Yükle ve Denetle (Zorunlu İlk Adım)"
 
 # ==============================================================================
-# BÖLÜM 2: Veriyi Yükle, Denetle ve İnteraktif Temizle (İLK VE ZORUNLU BÖLÜM)
+# BÖLÜM 2: Veriyi Yükle, Denetle ve Manipüle Et (RANE & TYPE STUDIO)
 # ==============================================================================
 if "Bölüm 2: Veriyi Yükle" in current_section:
     st.header("📂 Bölüm 2: Veri Yükleme ve Manipülasyon Stüdyosu")
     st.markdown("""
     <div class="section-box">
-    <h3>Veri Yükleme ve Kalite Kontrolü</h3>
-    <p>Veri setinizi yükleyin. Ardından aşağıdaki interaktif araçlarla veri tiplerini düzeltebilir ve eksik değerleri denetleyebilirsiniz.</p>
+    <h3>Veri Yükleme, Sütun Yeniden Adlandırma ve Tip Kontrolü</h3>
+    <p>Veri setinizi yükleyin. Ardından sütun adlarını düzenleyebilir, veri tiplerini ayarlayabilir ve kalite kontrolü yapabilirsiniz.</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -166,9 +166,43 @@ if "Bölüm 2: Veriyi Yükle" in current_section:
             st.metric("Toplam Sütun (Değişken)", df_working.shape[1])
             
         st.markdown("---")
-        st.subheader("🛠️ İnteraktif Veri Tipi Düzenleme Paneli")
+        st.subheader("🛠️ İnteraktif Veri ve Sütun Yönetim Paneli")
         
-        with st.expander("⚙️ Sütun Veri Tiplerini Güncelle (Tıklayın)", expanded=False):
+        # 1. RENAME STUDIO (Sütun Adı Düzenleyici)
+        with st.expander("✍️ Sütun Adı Düzenleyici (Rename Studio)", expanded=True):
+            st.info("💡 Sütun adlarındaki boşlukları, Türkçe karakterleri otomatik temizleyebilir veya her sütunu tek tek yeniden adlandırabilirsiniz.")
+            
+            if st.button("🧹 Tüm Sütun Adlarını Otomatik Temizle (Boşlukları al, küçük harfe çevir)"):
+                new_cols = {}
+                tr_map = {'ç':'c', 'ğ':'g', 'ı':'i', 'ö':'o', 'ş':'s', 'ü':'u', 'İ':'i', 'Ç':'c', 'Ğ':'g', 'Ö':'o', 'Ş':'s', 'Ü':'u'}
+                for col in df_working.columns:
+                    cleaned = col.strip().lower().replace(" ", "_")
+                    for k, v in tr_map.items():
+                        cleaned = cleaned.replace(k, v)
+                    new_cols[col] = cleaned
+                df_working = df_working.rename(columns=new_cols)
+                st.session_state['df_raw'] = df_working
+                st.success("✨ Sütun adları otomatik olarak temizlendi!")
+                st.rerun()
+                
+            st.write("---")
+            st.write("**Manuel Sütun Adı Güncelleme:**")
+            new_column_names = {}
+            for col in df_working.columns:
+                new_name = st.text_input(f"Eski: `{col}`", value=col, key=f"rename_{col}")
+                new_column_names[col] = new_name
+                
+            if st.button("💾 Sütun Adı Değişikliklerini Kaydet", type="primary"):
+                if len(set(new_column_names.values())) < len(new_column_names.values()):
+                    st.error("⚠️ Hata: Sütun adları benzersiz olmalıdır! Aynı adı birden fazla sütuna veremezsiniz.")
+                else:
+                    df_working = df_working.rename(columns=new_column_names)
+                    st.session_state['df_raw'] = df_working
+                    st.success("✨ Sütun adları başarıyla güncellendi!")
+                    st.rerun()
+
+        # 2. DTYPE CONVERTER (Veri Tipi Düzenleyici)
+        with st.expander("⚙️ Sütun Veri Tiplerini Güncelle", expanded=False):
             st.info("💡 Sütunların veri tiplerini (`int64`, `float64`, `object`, `category`) ihtiyacınıza göre dönüştürebilirsiniz.")
             
             edited_cols_data = []
