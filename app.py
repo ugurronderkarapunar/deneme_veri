@@ -301,4 +301,99 @@ if uploaded_file is not None:
                     fig_cm = ff.create_annotated_heatmap(
                         z=cm, 
                         x=['Tahmin: 0', 'Tahmin: 1'], 
-                        y=['Gerçek: 0', 'Gerçek
+                        y=['Gerçek: 0', 'Gerçek: 1'], 
+                        colorscale='Blues'
+                    )
+                    st.plotly_chart(fig_cm, use_container_width=True)
+            else:
+                st.info("⚠️ Lütfen önce modeli eğitin.")
+
+        with tab4:
+            st.subheader("🔍 SHAP Model Açıklanabilirliği")
+            
+            # SHAP Kütüphane Otomatik Kontrol ve Kurulum Desteği
+            global SHAP_AVAILABLE
+            try:
+                import shap
+                SHAP_AVAILABLE = True
+            except ImportError:
+                SHAP_AVAILABLE = False
+
+            if 'trained_pipeline' in st.session_state:
+                if not SHAP_AVAILABLE:
+                    st.warning("⚠️ SHAP kütüphanesi ortamda eksik. Otomatik yükleniyor, lütfen bekleyin...")
+                    try:
+                        subprocess.check_call([sys.executable, "-m", "pip", "install", "shap"])
+                        import shap
+                        SHAP_AVAILABLE = True
+                        st.success("SHAP başarıyla yüklendi!")
+                    except Exception as e:
+                        st.error(f"SHAP yüklenemedi: {e}")
+
+                if SHAP_AVAILABLE:
+                    if st.button("SHAP Önem Grafiğini Üret"):
+                        with st.spinner("SHAP değerleri hesaplanıyor..."):
+                            model_step = st.session_state['trained_pipeline'].named_steps['model']
+                            prep_step = st.session_state['trained_pipeline'].named_steps['prep']
+                            fe_step = st.session_state['trained_pipeline'].named_steps['fe']
+                            
+                            transformed_data = prep_step.transform(fe_step.transform(X_test))
+                            rf_est = dict(model_step.estimators_).get('rf', None)
+                            if rf_est:
+                                explainer = shap.TreeExplainer(rf_est)
+                                shap_values = explainer.shap_values(transformed_data)
+                                
+                                fig, ax = plt.subplots(figsize=(8, 5))
+                                shap.summary_plot(shap_values[1] if isinstance(shap_values, list) else shap_values, transformed_data, show=False)
+                                st.pyplot(fig)
+                            else:
+                                st.warning("SHAP grafiği için modeller arasına Random Forest eklemelisiniz.")
+            else:
+                st.info("⚠️ Lütfen önce 'Model & Voting Eğitimi' sekmesinden modeli eğitin.")
+
+        with tab5:
+            st.subheader("🎯 Bireysel Çalışan Risk Simülasyonu")
+            if 'trained_pipeline' in st.session_state:
+                sample_idx = st.slider("Test Setinden Çalışan Seçin", 0, len(st.session_state['X_test_raw'])-1, 0)
+                single_row = st.session_state['X_test_raw'].iloc[[sample_idx]]
+                st.dataframe(single_row, use_container_width=True)
+                
+                if st.button("Risk Skorunu Hesapla", type="primary"):
+                    pred_prob = st.session_state['trained_pipeline'].predict_proba(st.session_state['X_test_fe'].iloc[[sample_idx]])[:, 1][0]
+                    
+                    col_m1, col_m2 = st.columns(2)
+                    with col_m1:
+                        st.metric(label="Ayrılma (Churn) Olasılığı", value=f"%{pred_prob*100:.1f}")
+                    with col_m2:
+                        if pred_prob > 0.5:
+                            st.error("⚠️ Yüksek Risk Grubu!")
+                        else:
+                            st.success("✅ Düşük Risk / Güvenli.")
+            else:
+                st.info("Simülasyon için önce modeli eğitmelisiniz.")
+
+        with tab6:
+            st.subheader("📁 Toplu Skorlama ve Rapor İndirme (Batch Prediction)")
+            st.markdown("Yeni veya etiketlenmemiş çalışan verilerinizi yükleyerek tüm şirket için risk skorlarını tek seferde hesaplayın.")
+            batch_file = st.file_uploader("Test / Yeni Veri Seti Yükle (.xlsx / .csv)", type=["xlsx", "csv"], key="batch")
+            
+            if batch_file is not None:
+                df_batch = load_data(batch_file)
+                st.dataframe(df_batch.head(), use_container_width=True)
+                
+                if st.button("Tüm Listeyi Skorla"):
+                    if 'trained_pipeline' in st.session_state:
+                        pipeline = st.session_state['trained_pipeline']
+                        probs = pipeline.predict_proba(df_batch)[:, 1]
+                        df_batch['Ayrilma_Olasiligi'] = [f"%{p*100:.2f}" for p in probs]
+                        df_batch['Risk_Durumu'] = ["Yüksek Risk" if p > 0.5 else "Güvenli" for p in probs]
+                        
+                        st.success("Skorlama tamamlandı!")
+                        st.dataframe(df_batch, use_container_width=True)
+                        
+                        csv = df_batch.to_csv(index=False).encode('utf-8')
+                        st.download_button("📥 Skorlanmış Raporu İndir (CSV)", data=csv, file_name="risk_analiz_raporu.csv", mime="text/csv")
+                    else:
+                        st.error("Önce model eğitimi yapmalısınız!")
+else:
+    st.info("👈 Başlamak için sol menüden veri setinizi yükleyin.")
