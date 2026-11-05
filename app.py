@@ -4,12 +4,12 @@ import subprocess
 import joblib
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import warnings
 warnings.filterwarnings("ignore")
 
 import streamlit as st
+import plotly.express as px
+import plotly.figure_factory as ff
 
 # --- OTOMATİK KÜTÜPHANE KONTROLÜ ---
 try:
@@ -31,9 +31,8 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, OrdinalEncoder
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, f1_score, roc_curve
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, f1_score
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
-from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.base import BaseEstimator, TransformerMixin
 
@@ -44,44 +43,28 @@ except ImportError:
     XGB_AVAILABLE = False
 
 # ==============================================================================
-# STREAMLIT ARAYÜZ YAPILANDIRMASI VE MODERN CSS STİLLERİ
+# STREAMLIT ARAYÜZ YAPILANDIRMASI VE MODERN CSS
 # ==============================================================================
 st.set_page_config(
-    page_title="Kurumsal Otomatik ML Platformu", 
+    page_title="Kurumsal Otomatik ML & AI Platformu", 
     page_icon="⚡", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Özel Modern Tasarım CSS Kodları
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #1E3A8A;
-        font-weight: 700;
-        margin-bottom: 0px;
-    }
-    .sub-header {
-        font-size: 1.1rem;
-        color: #4B5563;
-        margin-bottom: 25px;
-    }
-    .card {
-        background-color: #F8FAFC;
-        padding: 20px;
-        border-radius: 10px;
-        border: 1px solid #E2E8F0;
-        margin-bottom: 15px;
-    }
+    .main-header { font-size: 2.3rem; color: #1E3A8A; font-weight: 800; margin-bottom: 0px; }
+    .sub-header { font-size: 1.05rem; color: #4B5563; margin-bottom: 20px; }
+    .card { background-color: #F8FAFC; padding: 20px; border-radius: 10px; border: 1px solid #E2E8F0; margin-bottom: 15px; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="main-header">⚡ Kurumsal Otomatik Veri Bilimi Platformu</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Uçtan uca veri temizliği, çoklu model mimarisi, Voting, Optuna ve SHAP açıklanabilirliği tek platformda.</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Modern interaktif grafikler, toplu skorlama, gelişmiş Voting ve SHAP açıklanabilirliği.</p>', unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. ÖZEL ÖZELLİK MÜHENDİSLİĞİ (Custom Transformer)
+# 1. ÖZEL ÖZELLİK MÜHENDİSLİĞİ
 # ==============================================================================
 class HRFeatureEngineer(BaseEstimator, TransformerMixin):
     def __init__(self, ordinal_mappings=None):
@@ -109,9 +92,6 @@ class HRFeatureEngineer(BaseEstimator, TransformerMixin):
 
         return X_out
 
-# ==============================================================================
-# 2. ÖNBELLEKLENMİŞ VERİ YÜKLEME VE ÖN İŞLEME
-# ==============================================================================
 @st.cache_data
 def load_data(file):
     if file.name.endswith('.xlsx'):
@@ -153,41 +133,35 @@ def build_preprocessor(X_sample, ordinal_mappings):
     return preprocessor
 
 # ==============================================================================
-# 3. YAN MENÜ (SIDEBAR) - MODEL & HİPERPARAMETRE YÖNETİMİ
+# 2. YAN MENÜ (SIDEBAR)
 # ==============================================================================
 st.sidebar.markdown("### ⚙️ Veri Yapılandırması")
-uploaded_file = st.sidebar.file_uploader("Veri Seti Yükle (.xlsx / .csv)", type=["xlsx", "csv"])
+uploaded_file = st.sidebar.file_uploader("Eğitim Veri Seti Yükle (.xlsx / .csv)", type=["xlsx", "csv"])
 
 target_col = st.sidebar.text_input("Hedef Sütun (Target)", value="calisma_durumu")
 drop_cols_input = st.sidebar.text_input("Silinecek ID Sütunları", value="sicil_no")
 leakage_cols_input = st.sidebar.text_input("Sızıntı (Leakage) Sütunları", value="cikis_tarihi, cikis_nedeni, aktif_calisan_mi")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🤖 Model Seçimi ve Hiperparametreler")
-
-# Model 1: Logistic Regression
+st.sidebar.markdown("### 🤖 Model ve Hiperparametreler")
 use_lr = st.sidebar.checkbox("Logistic Regression", value=True)
-lr_c = st.sidebar.slider("LR - Düzenlileştirme (C)", 0.01, 10.0, 1.0, help="Küçük değerler aşırı öğrenmeyi engeller.")
+lr_c = st.sidebar.slider("LR - Düzenlileştirme (C)", 0.01, 10.0, 1.0)
 
-# Model 2: Random Forest
 use_rf = st.sidebar.checkbox("Random Forest", value=True)
 rf_n_estimators = st.sidebar.slider("RF - Ağaç Sayısı", 50, 300, 150)
 rf_max_depth = st.sidebar.slider("RF - Maksimum Derinlik", 3, 25, 10)
 
-# Model 3: Gradient Boosting
 use_gb = st.sidebar.checkbox("Gradient Boosting", value=True)
-gb_lr = st.sidebar.slider("GB - Öğrenme Hızı (Learning Rate)", 0.01, 0.3, 0.1)
+gb_lr = st.sidebar.slider("GB - Öğrenme Hızı", 0.01, 0.3, 0.1)
 
-# Model 4: XGBoost
 use_xgb = st.sidebar.checkbox("XGBoost", value=True if XGB_AVAILABLE else False, disabled=not XGB_AVAILABLE)
 
 # ==============================================================================
-# 4. ANA AKIŞ VE SEKMELİ (TABS) YAPI
+# 3. ANA AKIŞ VE SEKMELER
 # ==============================================================================
 if uploaded_file is not None:
     df_raw = load_data(uploaded_file)
     
-    # Sızıntı Temizliği
     drop_list = [c.strip() for c in drop_cols_input.split(",") if c.strip()]
     leak_list = [c.strip() for c in leakage_cols_input.split(",") if c.strip()]
     all_drops = drop_list + leak_list
@@ -213,45 +187,63 @@ if uploaded_file is not None:
         X_test_fe = fe.transform(X_test)
         preprocessor = build_preprocessor(X_train_fe, ordinal_mappings)
 
-        # Sekmeler (Modern UI)
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "📂 Keşifsel Veri Analizi (EDA)", 
-            "⚙️ Model Eğitimi & Voting", 
-            "📈 İstatistiksel Değerlendirme", 
-            "🔍 SHAP Model Açıklanabilirliği",
-            "🎯 Bireysel Risk Simülasyonu"
+        # Sekmeli Modern Yapı
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            "📂 Modern EDA (Keşif)", 
+            "⚙️ Model & Voting Eğitimi", 
+            "📈 İstatistiksel Liderlik", 
+            "🔍 SHAP Analizi",
+            "🎯 Bireysel Simülasyon",
+            "📁 Toplu Skorlama (Batch)"
         ])
 
         with tab1:
-            st.subheader("Veri Seti Karakteristiği ve Dağılımlar")
+            st.subheader("Veri Seti Karakteristiği ve İnteraktif Dağılımlar")
             st.dataframe(df_raw.head(), use_container_width=True)
             
             col1, col2 = st.columns(2)
             with col1:
                 st.write("**Hedef Değişken Sınıf Oranları:**")
-                fig, ax = plt.subplots(figsize=(5, 3))
-                sns.countplot(x=y, ax=ax, palette="crest")
-                st.pyplot(fig)
+                val_counts = y.value_counts().reset_index()
+                val_counts.columns = ['Sınıf', 'Adet']
+                fig_pie = px.pie(val_counts, names='Sınıf', values='Adet', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+                st.plotly_chart(fig_pie, use_container_width=True)
             with col2:
-                st.write("**Eksik Değer Matrisi:**")
-                missing_df = pd.DataFrame({"Eksik Sayısı": df_clean.isnull().sum()})
-                st.dataframe(missing_df[missing_df["Eksik Sayısı"] > 0], use_container_width=True)
+                st.write("**Eksik Değer Analizi:**")
+                missing_df = df_clean.isnull().sum().reset_index()
+                missing_df.columns = ['Sütun', 'Eksik Sayısı']
+                missing_df = missing_df[missing_df['Eksik Sayısı'] > 0]
+                if not missing_df.empty:
+                    fig_miss = px.bar(missing_df, x='Sütun', y='Eksik Sayısı', color='Eksik Sayısı', color_continuous_scale='Reds')
+                    st.plotly_chart(fig_miss, use_container_width=True)
+                else:
+                    st.success("Tebrikler! Veri setinde eksik değer bulunmuyor.")
 
         with tab2:
-            st.subheader("Topluluk (Voting) Model Yapılandırması")
-            st.markdown("Seçtiğin modellerin güçlerini birleştirerek daha kararlı tahminler üreten `VotingClassifier` kuruyoruz.")
+            st.subheader("Topluluk (Voting) Model Yapılandırıcı")
+            st.markdown("Seçilen tüm algoritmaların olasılıklarını birleştirerek en kararlı kararları üreten mimari.")
             
-            if st.button("🚀 Modelleri Eğit / Güncelle", type="primary"):
-                with st.spinner("Modeller eğitiliyor ve boru hattı (Pipeline) kuruluyor..."):
+            if st.button("🚀 Modelleri Eğit ve Kaydet", type="primary"):
+                with st.spinner("Modeller eğitiliyor..."):
                     active_estimators = []
+                    individual_models = {}
+                    
                     if use_lr:
-                        active_estimators.append(('lr', LogisticRegression(C=lr_c, max_iter=1000, random_state=42, class_weight='balanced')))
+                        m = LogisticRegression(C=lr_c, max_iter=1000, random_state=42, class_weight='balanced')
+                        active_estimators.append(('lr', m))
+                        individual_models['Logistic Regression'] = m
                     if use_rf:
-                        active_estimators.append(('rf', RandomForestClassifier(n_estimators=rf_n_estimators, max_depth=rf_max_depth, random_state=42, class_weight='balanced')))
+                        m = RandomForestClassifier(n_estimators=rf_n_estimators, max_depth=rf_max_depth, random_state=42, class_weight='balanced')
+                        active_estimators.append(('rf', m))
+                        individual_models['Random Forest'] = m
                     if use_gb:
-                        active_estimators.append(('gb', GradientBoostingClassifier(learning_rate=gb_lr, random_state=42)))
+                        m = GradientBoostingClassifier(learning_rate=gb_lr, random_state=42)
+                        active_estimators.append(('gb', m))
+                        individual_models['Gradient Boosting'] = m
                     if use_xgb and XGB_AVAILABLE:
-                        active_estimators.append(('xgb', XGBClassifier(random_state=42)))
+                        m = XGBClassifier(random_state=42)
+                        active_estimators.append(('xgb', m))
+                        individual_models['XGBoost'] = m
 
                     if not active_estimators:
                         st.warning("Lütfen sol menüden en az bir model seçin!")
@@ -265,97 +257,48 @@ if uploaded_file is not None:
 
                         final_pipeline.fit(X_train_fe, y_train)
                         
-                        # Oturum Hafızasına Kayıt (Gereksiz yeniden eğitimi önler)
+                        model_scores = {}
+                        for name, model in individual_models.items():
+                            p = Pipeline([('fe', HRFeatureEngineer(ordinal_mappings=ordinal_mappings)), ('prep', preprocessor), ('model', model)])
+                            p.fit(X_train_fe, y_train)
+                            sc = roc_auc_score(y_test, p.predict_proba(X_test_fe)[:, 1])
+                            model_scores[name] = sc
+
                         st.session_state['trained_pipeline'] = final_pipeline
-                        st.session_state['X_train_fe'] = X_train_fe
                         st.session_state['X_test_fe'] = X_test_fe
                         st.session_state['y_test'] = y_test
                         st.session_state['X_test_raw'] = X_test
+                        st.session_state['model_scores'] = model_scores
                         
-                        st.success("Tüm modeller başarıyla eğitildi ve oturum hafızasına kaydedildi!")
+                        st.success("Tüm modeller başarıyla eğitildi!")
 
         with tab3:
-            st.subheader("Model Performansı ve İstatistiksel Yorumlar")
+            st.subheader("Model Karşılaştırma Liderlik Tablosu & Performans")
             if 'trained_pipeline' in st.session_state:
                 pipeline = st.session_state['trained_pipeline']
                 xtest = st.session_state['X_test_fe']
                 ytest = st.session_state['y_test']
                 
-                y_pred = pipeline.predict(xtest)
+                threshold = st.slider("İnteraktif Karar Eşiği (Threshold Optimization)", 0.1, 0.9, 0.5, 0.05)
+                
                 y_proba = pipeline.predict_proba(xtest)[:, 1]
+                y_pred_custom = (y_proba >= threshold).astype(int)
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write("**Sınıflandırma Raporu:**")
-                    report = classification_report(ytest, y_pred, output_dict=True)
-                    st.dataframe(pd.DataFrame(report).transpose(), use_container_width=True)
-                with col2:
-                    st.write("**Karışıklık Matrisi (Confusion Matrix):**")
-                    fig, ax = plt.subplots(figsize=(5, 3.5))
-                    sns.heatmap(confusion_matrix(ytest, y_pred), annot=True, fmt='d', cmap='Blues', cbar=False, ax=ax)
-                    st.pyplot(fig)
-                
-                auc = roc_auc_score(ytest, y_proba)
-                f1 = f1_score(ytest, y_pred, average='weighted')
-                
-                st.markdown(f"""
-                <div class="card">
-                    <h4>📊 Otomatik İstatistiksel Analiz Raporu</h4>
-                    <ul>
-                        <li><b>ROC-AUC Skoru ({auc:.4f}):</b> Modelin pozitif ve negatif sınıfları birbirinden ayırt etme kapasitesi oldukça başarılıdır.</li>
-                        <li><b>F1-Score ({f1:.4f}):</b> Dengesiz sınıflar göz önüne alındığında modelin genel kararlılığını doğrular.</li>
-                    </ul>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.info("⚠️ Lütfen önce 'Model Eğitimi' sekmesinden modeli çalıştırın.")
-
-        with tab4:
-            st.subheader("🔍 Model Açıklanabilirliği (SHAP Değerleri)")
-            st.markdown("Modelin kararları hangi özelliklere (maaş, kıdem, yaş vb.) dayanarak verdiğini inceleyin.")
-            if 'trained_pipeline' in st.session_state and SHAP_AVAILABLE:
-                if st.button("SHAP Analizini Hesapla"):
-                    with st.spinner("SHAP değerleri hesaplanıyor..."):
-                        # Alt modeli veya ağaç tabanlı bileşeni alarak özet çıkaralım
-                        model_step = st.session_state['trained_pipeline'].named_steps['model']
-                        prep_step = st.session_state['trained_pipeline'].named_steps['prep']
-                        fe_step = st.session_state['trained_pipeline'].named_steps['fe']
-                        
-                        transformed_data = prep_step.transform(fe_step.transform(X_test))
-                        
-                        # Eğer Voting içinde Random Forest varsa onun üzerinden SHAP çıkaralım
-                        rf_est = dict(model_step.estimators_).get('rf', None)
-                        if rf_est:
-                            explainer = shap.TreeExplainer(rf_est)
-                            shap_values = explainer.shap_values(transformed_data)
-                            
-                            fig, ax = plt.subplots(figsize=(8, 5))
-                            shap.summary_plot(shap_values[1] if isinstance(shap_values, list) else shap_values, transformed_data, show=False)
-                            st.pyplot(fig)
-                        else:
-                            st.warning("SHAP görselleştirmesi için model grubunda Random Forest bulunmalıdır.")
-            else:
-                st.info("Lütfen önce modeli eğitin (SHAP kütüphanesinin yüklü olduğundan emin olun).")
-
-        with tab5:
-            st.subheader("🎯 Bireysel Çalışan Risk Simülasyonu")
-            if 'trained_pipeline' in st.session_state:
-                sample_idx = st.slider("Test Setinden Çalışan Seçin", 0, len(st.session_state['X_test_raw'])-1, 0)
-                single_row = st.session_state['X_test_raw'].iloc[[sample_idx]]
-                st.dataframe(single_row, use_container_width=True)
-                
-                if st.button("Risk Skorunu Hesapla", type="primary"):
-                    pred_prob = st.session_state['trained_pipeline'].predict_proba(st.session_state['X_test_fe'].iloc[[sample_idx]])[:, 1][0]
+                    st.write("**Tekli Modellerin ROC-AUC Karşılaştırması:**")
+                    scores_df = pd.DataFrame(list(st.session_state['model_scores'].items()), columns=['Model', 'ROC-AUC'])
+                    voting_auc = roc_auc_score(ytest, y_proba)
+                    scores_df.loc[len(scores_df)] = ['Voting Ensemble (Seçilen)', voting_auc]
+                    scores_df = scores_df.sort_values(by='ROC-AUC', ascending=False)
                     
-                    col_m1, col_m2 = st.columns(2)
-                    with col_m1:
-                        st.metric(label="Ayrılma (Churn) Olasılığı", value=f"%{pred_prob*100:.1f}")
-                    with col_m2:
-                        if pred_prob > 0.5:
-                            st.error("⚠️ Yüksek Risk Grubu!")
-                        else:
-                            st.success("✅ Düşük Risk / Güvenli.")
-            else:
-                st.info("Simülasyon için önce modeli eğtmelisiniz.")
-else:
-    st.info("👈 Başlamak için lütfen sol menüden veri setinizi yükleyin.")
+                    fig_bar = px.bar(scores_df, x='Model', y='ROC-AUC', color='ROC-AUC', color_continuous_scale='Blues')
+                    st.plotly_chart(fig_bar, use_container_width=True)
+                    
+                with col2:
+                    st.write("**Modern İnteraktif Karışıklık Matrisi:**")
+                    cm = confusion_matrix(ytest, y_pred_custom)
+                    fig_cm = ff.create_annotated_heatmap(
+                        z=cm, 
+                        x=['Tahmin: 0', 'Tahmin: 1'], 
+                        y=['Gerçek: 0', 'Gerçek
