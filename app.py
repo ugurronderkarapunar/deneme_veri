@@ -150,12 +150,20 @@ if "Bölüm 2: Veriyi Yükle" in current_section:
     uploaded_file = st.file_uploader("Veri Setinizi Yükleyin (.xlsx / .csv)", type=["xlsx", "csv"])
     
     if uploaded_file is not None:
-        if 'df_raw' not in st.session_state or st.sidebar.button("🔄 Veriyi Sıfırla / Yeniden Yükle"):
-            st.session_state['df_raw'] = load_data(uploaded_file)
-            st.success("Veri başarıyla yüklendi ve hafızaya alındı!")
-            
+        st.session_state['df_raw'] = load_data(uploaded_file)
+        st.success("Veri başarıyla yüklendi ve hafızaya alındı!")
+        
+    if 'df_raw' in st.session_state:
         df_working = st.session_state['df_raw'].copy()
         
+        if st.sidebar.button("🔄 Veriyi Sıfırla / Yeniden Yükle"):
+            del st.session_state['df_raw']
+            if 'df_clean' in st.session_state:
+                del st.session_state['df_clean']
+            if 'X_train' in st.session_state:
+                del st.session_state['X_train']
+            st.rerun()
+            
         # --- HIZLI TEMİZLİK ARAÇLARI ÇUĞU ---
         st.subheader("⚡ Hızlı Veri Hijyeni İşlemleri")
         col_h1, col_h2, col_h3 = st.columns(3)
@@ -197,3 +205,194 @@ if "Bölüm 2: Veriyi Yükle" in current_section:
             st.metric("Toplam Sütun (Değişken)", df_working.shape[1])
             
         st.markdown("---")
+        st.subheader("🛠️ İnteraktif Veri ve Sütun Yönetim Paneli")
+        
+        # 1. RENAME STUDIO (Sütun Adı Düzenleyici)
+        with st.expander("✍️ Sütun Adı Düzenleyici (Rename Studio)", expanded=False):
+            st.info("💡 Sütun adlarındaki boşlukları, Türkçe karakterleri otomatik temizleyebilir veya her sütunu tek tek yeniden adlandırabilirsiniz.")
+            
+            if st.button("🧹 Tüm Sütun Adlarını Otomatik Temizle (Boşlukları al, küçük harfe çevir)"):
+                new_cols = {}
+                tr_map = {'ç':'c', 'ğ':'g', 'ı':'i', 'ö':'o', 'ş':'s', 'ü':'u', 'İ':'i', 'Ç':'c', 'Ğ':'g', 'Ö':'o', 'Ş':'s', 'Ü':'u'}
+                for col in df_working.columns:
+                    cleaned = col.strip().lower().replace(" ", "_")
+                    for k, v in tr_map.items():
+                        cleaned = cleaned.replace(k, v)
+                    new_cols[col] = cleaned
+                df_working = df_working.rename(columns=new_cols)
+                st.session_state['df_raw'] = df_working
+                st.success("✨ Sütun adları otomatik olarak temizlendi!")
+                st.rerun()
+                
+            st.write("---")
+            st.write("**Manuel Sütun Adı Güncelleme:**")
+            new_column_names = {}
+            for col in df_working.columns:
+                new_name = st.text_input(f"Eski: `{col}`", value=col, key=f"rename_{col}")
+                new_column_names[col] = new_name
+                
+            if st.button("💾 Sütun Adı Değişikliklerini Kaydet", type="primary"):
+                if len(set(new_column_names.values())) < len(new_column_names.values()):
+                    st.error("⚠️ Hata: Sütun adları benzersiz olmalıdır! Aynı adı birden fazla sütuna veremezsiniz.")
+                else:
+                    df_working = df_working.rename(columns=new_column_names)
+                    st.session_state['df_raw'] = df_working
+                    st.success("✨ Sütun adları başarıyla güncellendi!")
+                    st.rerun()
+
+        # 2. DTYPE CONVERTER (Veri Tipi Düzenleyici)
+        with st.expander("⚙️ Sütun Veri Tiplerini Güncelle", expanded=False):
+            st.info("💡 Sütunların veri tiplerini (`int64`, `float64`, `object`, `category`) ihtiyacınıza göre dönüştürebilirsiniz.")
+            
+            edited_cols_data = []
+            for col in df_working.columns:
+                current_type = str(df_working[col].dtype)
+                col_type_target = st.selectbox(
+                    f"'{col}' sütunu veri tipi:", 
+                    ["Mevcut (" + current_type + ")", "int64 (Sayısal)", "float64 (Ondalıklı)", "object (Metin)", "category (Kategorik)"],
+                    key=f"dtype_{col}"
+                )
+                edited_cols_data.append((col, col_type_target))
+                
+            if st.button("🔧 Veri Tiplerini Güncelle", type="primary"):
+                for col, target in edited_cols_data:
+                    try:
+                        if "int64" in target:
+                            df_working[col] = pd.to_numeric(df_working[col], errors='coerce').fillna(0).astype('int64')
+                        elif "float64" in target:
+                            df_working[col] = pd.to_numeric(df_working[col], errors='coerce').astype('float64')
+                        elif "object" in target:
+                            df_working[col] = df_working[col].astype(str)
+                        elif "category" in target:
+                            df_working[col] = df_working[col].astype('category')
+                    except Exception as e:
+                        st.warning(f"'{col}' sütunu dönüştürülemedi: {e}")
+                
+                st.session_state['df_raw'] = df_working
+                st.success("✨ Veri tipleri başarıyla güncellendi!")
+                st.rerun()
+
+        # 3. MISSING VALUE HANDLER (Eksik Değer Müdahale Aracı)
+        with st.expander("🧹 Eksik Değer (NaN) Temizleme Stüdyosu", expanded=False):
+            st.info("💡 Veri setindeki eksik hücrelere anlık müdahale edebilirsiniz.")
+            impute_strategy = st.selectbox(
+                "Eksik Değer Doldurma / Temizleme Stratejisi",
+                ["Hiçbiri (Olduğu Gibi Bırak)", "Boş Satırları Tamamen Sil (dropna)", "Sayısal: Medyan / Kategorik: En Sık Görülen", "Sayısal: 0 ile Doldur"]
+            )
+            if st.button("🚀 Eksik Değer Stratejisini Uygula"):
+                if "Sil" in impute_strategy:
+                    df_working = df_working.dropna().reset_index(drop=True)
+                elif "Medyan" in impute_strategy:
+                    for col in df_working.select_dtypes(include=[np.number]).columns:
+                        df_working[col] = df_working[col].fillna(df_working[col].median())
+                    for col in df_working.select_dtypes(include=['object', 'category']).columns:
+                        mode_val = df_working[col].mode()[0] if not df_working[col].mode().empty else "Bilinmiyor"
+                        df_working[col] = df_working[col].fillna(mode_val)
+                elif "0 ile Doldur" in impute_strategy:
+                    df_working = df_working.fillna(0)
+                
+                st.session_state['df_raw'] = df_working
+                st.success("✨ Eksik değer stratejisi başarıyla uygulandı!")
+                st.rerun()
+
+        st.markdown("---")
+        st.subheader("📋 Veri Seti Kalite ve Eksik Değer Karnesi")
+        info_df = pd.DataFrame({
+            "Veri Tipi": df_working.dtypes.astype(str),
+            "Eksik Değer Sayısı": df_working.isnull().sum(),
+            "Eksik Oranı (%)": (df_working.isnull().mean() * 100).round(2),
+            "Benzersiz (Unique) Değer": df_working.nunique()
+        })
+        st.dataframe(info_df, use_container_width=True)
+    else:
+        st.info("👈 Lütfen devam etmek için yukarıdan veri setinizi yükleyin.")
+
+# ==============================================================================
+# BÖLÜM 1: Kurulum ve Proje Ayarları
+# ==============================================================================
+elif current_section == "Bölüm 1: Kurulum ve Proje Ayarları":
+    st.header("Bölüm 1: Kurulum ve Proje Ayarları")
+    st.markdown("""
+    <div class="section-box">
+    <h3>Proje Yapılandırma ve Meta-Veri Yönetimi</h3>
+    <p>Bu bölümde projenizin temel çalışma parametrelerini, seed değerlerini ve ortam yapılandırmasını yönetebilirsiniz.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col_set1, col_set2 = st.columns(2)
+    with col_set1:
+        project_name = st.text_input("Proje Adı", value="HR Attrition & Churn Analytics SaaS")
+        problem_type = st.selectbox("Problem Tipi", ["Binary Classification (İkili Sınıflandırma)", "Regression (Sayısal Tahmin)"])
+    with col_set2:
+        global_seed = st.number_input("Global Random Seed (Tekrarlanabilirlik)", value=42, step=1)
+        target_metric = st.selectbox("Ana Optimizasyon Metriği", ["ROC-AUC", "F1-Score", "Accuracy"])
+        
+    st.session_state['project_config'] = {
+        "name": project_name,
+        "type": problem_type,
+        "seed": global_seed,
+        "metric": target_metric
+    }
+    
+    st.markdown("---")
+    st.subheader("💻 Sistem ve Ortam Diagnostiği")
+    sys_col1, sys_col2, sys_col3 = st.columns(3)
+    with sys_col1:
+        st.metric("Python Sürümü", f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    with sys_col2:
+        st.metric("XGBoost Durumu", "Aktif ✅" if XGB_AVAILABLE else "Devre Dışı ❌")
+    with sys_col3:
+        st.metric("SHAP Açıklanabilirlik", "Hazır 🚀" if SHAP_AVAILABLE else "Yükleniyor...")
+
+# ==============================================================================
+# BÖLÜM 3: Hedef ve Özellik Hazırlama
+# ==============================================================================
+elif current_section == "Bölüm 3: Hedef ve Özellik Hazırlama":
+    st.header("Bölüm 3: Hedef ve Özellik Hazırlama")
+    df = st.session_state['df_raw']
+    
+    target_col = st.selectbox("Hedef Değişkeni (Target) Seçin:", df.columns, index=min(len(df.columns)-1, 0))
+    drop_cols = st.multiselect("Silinecek / Gereksiz ID Sütunlarını Seçin:", df.columns.tolist())
+    
+    st.session_state['target_col'] = target_col
+    st.session_state['drop_cols'] = drop_cols
+    
+    st.markdown("---")
+    st.subheader("Özellik Mühendisliği Kararları")
+    apply_fe = st.checkbox("Özel Özellik Mühendisliği Uygula (Tarih farkları, kıdem, maaş oranları)", value=True)
+    st.session_state['apply_fe'] = apply_fe
+    
+    if st.button("Hedef ve Özellikleri Onayla"):
+        df_clean = df.drop(columns=drop_cols, errors='ignore')
+        st.session_state['df_clean'] = df_clean
+        st.success("Özellik hazırlama adımı tamamlandı!")
+
+# ==============================================================================
+# BÖLÜM 4: Train / Test Bölme
+# ==============================================================================
+elif current_section == "Bölüm 4: Train / Test Bölme":
+    st.header("Bölüm 4: Train / Test Bölme")
+    df_clean = st.session_state['df_clean']
+    target_col = st.session_state['target_col']
+    
+    test_size = st.slider("Test Seti Oranı (%)", 10, 40, 25, 5) / 100.0
+    stratify_choice = st.checkbox("Stratified Split (Sınıf oranlarını koruyarak böl)", value=True)
+    
+    if st.button("Veriyi Train / Test Olarak Böl"):
+        X = df_clean.drop(columns=[target_col])
+        y_raw = df_clean[target_col]
+        
+        le = LabelEncoder()
+        y = pd.Series(le.fit_transform(y_raw.astype(str)), index=y_raw.index)
+        st.session_state['label_encoder'] = le
+        
+        strat = y if stratify_choice else None
+        seed_val = st.session_state.get('project_config', {}).get('seed', 42)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=seed_val, stratify=strat)
+        
+        st.session_state['X_train'] = X_train
+        st.session_state['X_test'] = X_test
+        st.session_state['y_train'] = y_train
+        st.session_state['y_test'] = y_test
+        
+        st.success(f
