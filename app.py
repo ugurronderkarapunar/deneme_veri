@@ -65,7 +65,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="main-header">🔬 10 Bölümlü Kontrollü Veri Bilimi ve İstatistiksel Denetim Platformu</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Önce veri setinizi yükleyin, ardından 10 aşamalı modüler analiz sürecini yönetin.</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Önce veri setinizi yükleyin ve düzenleyin, ardından 10 aşamalı modüler analiz sürecini yönetin.</p>', unsafe_allow_html=True)
 
 # ==============================================================================
 # ÖZEL ÖZELLİK MÜHENDİSLİĞİ (Scikit-Learn Uyumlu Transformer)
@@ -108,7 +108,6 @@ def load_data(file):
 # ==============================================================================
 st.sidebar.markdown("## 🧭 10 Aşamalı Proje Rehberi")
 
-# Veri yüklenip yüklenmediğini kontrol et
 data_loaded = 'df_raw' in st.session_state
 
 if not data_loaded:
@@ -133,45 +132,84 @@ else:
 
 current_section = st.sidebar.radio("Gitmek İstediğiniz Bölümü Seçin:", available_sections)
 
-# Eğer veri yüklenmediyse kullanıcıyı doğrudan Veri Yükleme ekranına yönlendir
 if not data_loaded and "Bölüm 2" not in current_section:
     current_section = "Bölüm 2: Veriyi Yükle ve Denetle (Zorunlu İlk Adım)"
 
 # ==============================================================================
-# BÖLÜM 2: Veriyi Yükle ve Denetle (İLK VE ZORUNLU BÖLÜM)
+# BÖLÜM 2: Veriyi Yükle, Denetle ve İnteraktif Temizle (İLK VE ZORUNLU BÖLÜM)
 # ==============================================================================
 if "Bölüm 2: Veriyi Yükle" in current_section:
-    st.header("📂 Bölüm 2: Veriyi Yükle ve Denetle (Başlangıç Adımı)")
+    st.header("📂 Bölüm 2: Veri Yükleme ve Manipülasyon Stüdyosu")
     st.markdown("""
     <div class="section-box">
-    <h3>Veri Seti Yükleme Alanı</h3>
-    <p>Platformu kullanmaya başlamak için lütfen analiz etmek istediğiniz Excel (.xlsx) veya CSV (.csv) formatındaki veri setinizi yükleyin.</p>
+    <h3>Veri Yükleme ve Kalite Kontrolü</h3>
+    <p>Veri setinizi yükleyin. Ardından aşağıdaki interaktif araçlarla veri tiplerini düzeltebilir ve eksik değerleri denetleyebilirsiniz.</p>
     </div>
     """, unsafe_allow_html=True)
     
-    uploaded_file = st.file_uploader("Veri Setinizi Yükleyin", type=["xlsx", "csv"])
+    uploaded_file = st.file_uploader("Veri Setinizi Yükleyin (.xlsx / .csv)", type=["xlsx", "csv"])
     
     if uploaded_file is not None:
-        df_raw = load_data(uploaded_file)
-        st.session_state['df_raw'] = df_raw
-        st.success("🎉 Veri başarıyla yüklendi! Artık sol menüden diğer tüm bölümlere geçiş yapabilirsiniz.")
-        st.dataframe(df_raw.head(), use_container_width=True)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Toplam Satır Sayısı", df_raw.shape[0])
-        with col2:
-            st.metric("Toplam Sütun Sayısı", df_raw.shape[1])
+        if 'df_raw' not in st.session_state or st.sidebar.button("🔄 Veriyi Sıfırla / Yeniden Yükle"):
+            st.session_state['df_raw'] = load_data(uploaded_file)
+            st.success("Veri başarıyla yüklendi ve hafızaya alındı!")
             
-        st.subheader("Eksik Değer ve Tip Kontrolü")
+        df_working = st.session_state['df_raw'].copy()
+        
+        st.subheader("📊 Ham Veri Önizlemesi ve Boyutları")
+        st.dataframe(df_working.head(), use_container_width=True)
+        
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            st.metric("Toplam Satır (Gözlem)", df_working.shape[0])
+        with col_m2:
+            st.metric("Toplam Sütun (Değişken)", df_working.shape[1])
+            
+        st.markdown("---")
+        st.subheader("🛠️ İnteraktif Veri Tipi Düzenleme Paneli")
+        
+        with st.expander("⚙️ Sütun Veri Tiplerini Güncelle (Tıklayın)", expanded=False):
+            st.info("💡 Sütunların veri tiplerini (`int64`, `float64`, `object`, `category`) ihtiyacınıza göre dönüştürebilirsiniz.")
+            
+            edited_cols_data = []
+            for col in df_working.columns:
+                current_type = str(df_working[col].dtype)
+                col_type_target = st.selectbox(
+                    f"'{col}' sütunu veri tipi:", 
+                    ["Mevcut (" + current_type + ")", "int64 (Sayısal)", "float64 (Ondalıklı)", "object (Metin)", "category (Kategorik)"],
+                    key=f"dtype_{col}"
+                )
+                edited_cols_data.append((col, col_type_target))
+                
+            if st.button("🔧 Veri Tiplerini Güncelle", type="primary"):
+                for col, target in edited_cols_data:
+                    try:
+                        if "int64" in target:
+                            df_working[col] = pd.to_numeric(df_working[col], errors='coerce').fillna(0).astype('int64')
+                        elif "float64" in target:
+                            df_working[col] = pd.to_numeric(df_working[col], errors='coerce').astype('float64')
+                        elif "object" in target:
+                            df_working[col] = df_working[col].astype(str)
+                        elif "category" in target:
+                            df_working[col] = df_working[col].astype('category')
+                    except Exception as e:
+                        st.warning(f"'{col}' sütunu dönüştürülemedi: {e}")
+                
+                st.session_state['df_raw'] = df_working
+                st.success("✨ Veri tipleri başarıyla güncellendi!")
+                st.rerun()
+
+        st.markdown("---")
+        st.subheader("📋 Veri Seti Kalite ve Eksik Değer Karnesi")
         info_df = pd.DataFrame({
-            "Veri Tipi": df_raw.dtypes.astype(str),
-            "Eksik Değer Sayısı": df_raw.isnull().sum(),
-            "Eksik Oranı (%)": (df_raw.isnull().mean() * 100).round(2)
+            "Veri Tipi": df_working.dtypes.astype(str),
+            "Eksik Değer Sayısı": df_working.isnull().sum(),
+            "Eksik Oranı (%)": (df_working.isnull().mean() * 100).round(2),
+            "Benzersiz (Unique) Değer": df_working.nunique()
         })
         st.dataframe(info_df, use_container_width=True)
     elif not data_loaded:
-        st.info("👈 Lütfen devam etmek için yukarıdan veya sol menüden veri setinizi yükleyin.")
+        st.info("👈 Lütfen devam etmek için yukarıdan veri setinizi yükleyin.")
 
 # ==============================================================================
 # BÖLÜM 1: Kurulum ve Proje Ayarları
