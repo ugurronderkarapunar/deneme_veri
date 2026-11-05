@@ -130,12 +130,37 @@ if current_section == "Bölüm 1: Kurulum ve Proje Ayarları":
     st.header("Bölüm 1: Kurulum ve Proje Ayarları")
     st.markdown("""
     <div class="section-box">
-    <h3>Proje Yapılandırma Bilgilendirmesi</h3>
-    <p>Bu bölümde proje için gerekli olan Python kütüphaneleri kontrol edilir. 
-    Sonraki adımlarda veri setinizi yükleyerek uçtan uca makine öğrenmesi pipeline'ını yönetebilirsiniz.</p>
+    <h3>Proje Yapılandırma ve Meta-Veri Yönetimi</h3>
+    <p>Bu bölüm, projenizin temel çalışma parametrelerini, seed değerlerini ve ortam yapılandırmasını yönettiğiniz merkezdir.</p>
     </div>
     """, unsafe_allow_html=True)
-    st.info("💡 Sol menüden **Bölüm 2: Veriyi Yükle ve Denetle** adımına geçebilirsiniz.")
+    
+    col_set1, col_set2 = st.columns(2)
+    with col_set1:
+        project_name = st.text_input("Proje Adı", value="HR Attrition & Churn Analytics SaaS")
+        problem_type = st.selectbox("Problem Tipi", ["Binary Classification (İkili Sınıflandırma)", "Regression (Sayısal Tahmin)"])
+    with col_set2:
+        global_seed = st.number_input("Global Random Seed (Tekrarlanabilirlik)", value=42, step=1)
+        target_metric = st.selectbox("Ana Optimizasyon Metriği", ["ROC-AUC", "F1-Score", "Accuracy"])
+        
+    st.session_state['project_config'] = {
+        "name": project_name,
+        "type": problem_type,
+        "seed": global_seed,
+        "metric": target_metric
+    }
+    
+    st.markdown("---")
+    st.subheader("💻 Sistem ve Ortam Diagnostiği")
+    sys_col1, sys_col2, sys_col3 = st.columns(3)
+    with sys_col1:
+        st.metric("Python Sürümü", f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    with sys_col2:
+        st.metric("XGBoost Durumu", "Aktif ✅" if XGB_AVAILABLE else "Devre Dışı ❌")
+    with sys_col3:
+        st.metric("SHAP Açıklanabilirlik", "Hazır 🚀" if SHAP_AVAILABLE else "Yükleniyor...")
+        
+    st.success("✅ Proje ayarları başarıyla yapılandırıldı. Sonraki adım için sol menüden **Bölüm 2: Veriyi Yükle ve Denetle** seçeneğine geçebilirsiniz.")
 
 # ==============================================================================
 # BÖLÜM 2: Veriyi Yükle ve Denetle
@@ -211,7 +236,8 @@ elif current_section == "Bölüm 4: Train / Test Bölme":
             st.session_state['label_encoder'] = le
             
             strat = y if stratify_choice else None
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42, stratify=strat)
+            seed_val = st.session_state.get('project_config', {}).get('seed', 42)
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=seed_val, stratify=strat)
             
             st.session_state['X_train'] = X_train
             st.session_state['X_test'] = X_test
@@ -324,14 +350,15 @@ elif current_section == "Bölüm 7: Model Karşılaştırma (CV)":
             y_train = st.session_state['y_train']
             preprocessor = st.session_state['preprocessor']
             fe = st.session_state.get('fe', None)
+            seed_val = st.session_state.get('project_config', {}).get('seed', 42)
             
             selected_models = {}
-            if use_lr: selected_models['Logistic Regression'] = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
-            if use_rf: selected_models['Random Forest'] = RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42)
-            if use_gb: selected_models['Gradient Boosting'] = GradientBoostingClassifier(random_state=42)
-            if use_dt: selected_models['Decision Tree'] = DecisionTreeClassifier(random_state=42)
-            if use_svc: selected_models['SVC'] = SVC(probability=True, random_state=42)
-            if use_xgb and XGB_AVAILABLE: selected_models['XGBoost'] = XGBClassifier(random_state=42)
+            if use_lr: selected_models['Logistic Regression'] = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=seed_val)
+            if use_rf: selected_models['Random Forest'] = RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=seed_val)
+            if use_gb: selected_models['Gradient Boosting'] = GradientBoostingClassifier(random_state=seed_val)
+            if use_dt: selected_models['Decision Tree'] = DecisionTreeClassifier(random_state=seed_val)
+            if use_svc: selected_models['SVC'] = SVC(probability=True, random_state=seed_val)
+            if use_xgb and XGB_AVAILABLE: selected_models['XGBoost'] = XGBClassifier(random_state=seed_val)
             
             if not selected_models:
                 st.warning("Lütfen en az bir model seçin!")
@@ -340,7 +367,7 @@ elif current_section == "Bölüm 7: Model Karşılaştırma (CV)":
                 steps = [('prep', preprocessor)]
                 if fe: steps.insert(0, ('fe', fe))
                 
-                skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+                skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed_val)
                 
                 with st.spinner("Modeller çapraz doğrulamadan geçiriliyor..."):
                     for name, model in selected_models.items():
@@ -377,18 +404,19 @@ elif current_section == "Bölüm 8: Hiperparametre Ayarı":
             y_train = st.session_state['y_train']
             preprocessor = st.session_state['preprocessor']
             fe = st.session_state.get('fe', None)
+            seed_val = st.session_state.get('project_config', {}).get('seed', 42)
             
             with st.spinner("Optuna en iyi parametreleri arıyor..."):
                 def objective(trial):
                     n_est = trial.suggest_int('n_estimators', 50, 200)
                     max_d = trial.suggest_int('max_depth', 3, 15)
-                    clf = RandomForestClassifier(n_estimators=n_est, max_depth=max_d, class_weight='balanced', random_state=42)
+                    clf = RandomForestClassifier(n_estimators=n_est, max_depth=max_d, class_weight='balanced', random_state=seed_val)
                     
                     steps = [('prep', preprocessor), ('clf', clf)]
                     if fe: steps.insert(0, ('fe', fe))
                     pipe = Pipeline(steps)
                     
-                    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+                    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=seed_val)
                     scores = cross_val_score(pipe, X_train, y_train, cv=skf, scoring='roc_auc')
                     return scores.mean()
 
@@ -469,8 +497,9 @@ elif current_section == "Bölüm 10: İstatistiksel Güvenilirlik & Yorumlama":
         X_test = st.session_state['X_test']
         y_test = st.session_state['y_test']
         pipeline = st.session_state['final_pipeline']
+        seed_val = st.session_state.get('project_config', {}).get('seed', 42)
         
-        dummy = DummyClassifier(strategy='most_frequent')
+        dummy = DummyClassifier(strategy='most_frequent', random_state=seed_val)
         dummy.fit(X_train, y_train)
         dummy_acc = dummy.score(X_test, y_test)
         
