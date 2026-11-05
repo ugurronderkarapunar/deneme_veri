@@ -9,7 +9,6 @@ warnings.filterwarnings("ignore")
 
 import streamlit as st
 import plotly.express as px
-import plotly.figure_factory as ff
 
 # --- SHAP GLOBAL TANIMI VE KÜTÜPHANE KONTROLÜ ---
 global SHAP_AVAILABLE
@@ -166,7 +165,7 @@ if uploaded_file is not None:
     drop_list = [c.strip() for c in drop_cols_input.split(",") if c.strip()]
     leak_list = [c.strip() for c in leakage_cols_input.split(",") if c.strip()]
     all_drops = drop_list + leak_list
-    df_clean = df_raw.drop(columns=[c for c in all_drops if c in df_raw.columns], errors='ignore')
+    df_clean = df_raw.drop(columns=[c for c in all_drops if c in df_clean.columns], errors='ignore')
     
     if target_col not in df_clean.columns:
         st.error(f"Hata: '{target_col}' sütunu veri setinde bulunamadı!")
@@ -300,13 +299,16 @@ if uploaded_file is not None:
                     st.plotly_chart(fig_bar, use_container_width=True)
                     
                 with col2:
-                    st.write("**Modern İnteraktif Karışıklık Matrisi:**")
+                    st.write("**Modern İnteraktif Karışıklık Matrisi (Heatmap):**")
                     cm = confusion_matrix(ytest, y_pred_custom)
-                    fig_cm = ff.create_annotated_heatmap(
-                        z=cm, 
+                    # px.imshow kullanarak modern ve hatasız interaktif ısı haritası
+                    fig_cm = px.imshow(
+                        cm, 
+                        text_auto=True, 
+                        labels=dict(x="Tahmin Edilen", y="Gerçek Sınıf", color="Adet"),
                         x=['Tahmin: 0', 'Tahmin: 1'], 
-                        y=['Gerçek: 0', 'Gerçek: 1'], 
-                        colorscale='Blues'
+                        y=['Gerçek: 0', 'Gerçek: 1'],
+                        color_continuous_scale='Blues'
                     )
                     st.plotly_chart(fig_cm, use_container_width=True)
             else:
@@ -339,6 +341,7 @@ if uploaded_file is not None:
                                 explainer = shap.TreeExplainer(rf_est)
                                 shap_values = explainer.shap_values(transformed_data)
                                 
+                                import matplotlib.pyplot as plt
                                 fig, ax = plt.subplots(figsize=(8, 5))
                                 shap.summary_plot(shap_values[1] if isinstance(shap_values, list) else shap_values, transformed_data, show=False)
                                 st.pyplot(fig)
