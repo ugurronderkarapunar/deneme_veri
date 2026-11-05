@@ -31,8 +31,9 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, OrdinalEncoder
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, f1_score, precision_recall_curve
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, f1_score, roc_curve
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.base import BaseEstimator, TransformerMixin
 
@@ -43,15 +44,41 @@ except ImportError:
     XGB_AVAILABLE = False
 
 # ==============================================================================
-# STREAMLIT ARAYÜZ YAPILANDIRMASI (UI / UX İyileştirmesi: Wide Layout)
+# STREAMLIT ARAYÜZ YAPILANDIRMASI VE MODERN CSS STİLLERİ
 # ==============================================================================
-st.set_page_config(page_title="Kurumsal Otomatik ML Platformu", layout="wide")
+st.set_page_config(
+    page_title="Kurumsal Otomatik ML Platformu", 
+    page_icon="⚡", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-st.title("🚀 Kurumsal Otomatik Veri Bilimi ve İK Analitik Platformu")
+# Özel Modern Tasarım CSS Kodları
 st.markdown("""
-Bu platform; **Jr. Seviyesinde Temiz Kod** mimarisiyle verinizi işler, **Voting (Topluluk)** modeli kurar, 
-**Optuna** ile hiperparametreleri optimize eder ve sonuçları **istatistiksel dil ile otomatik yorumlar.**
-""")
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #1E3A8A;
+        font-weight: 700;
+        margin-bottom: 0px;
+    }
+    .sub-header {
+        font-size: 1.1rem;
+        color: #4B5563;
+        margin-bottom: 25px;
+    }
+    .card {
+        background-color: #F8FAFC;
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px solid #E2E8F0;
+        margin-bottom: 15px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<p class="main-header">⚡ Kurumsal Otomatik Veri Bilimi Platformu</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Uçtan uca veri temizliği, çoklu model mimarisi, Voting, Optuna ve SHAP açıklanabilirliği tek platformda.</p>', unsafe_allow_html=True)
 
 # ==============================================================================
 # 1. ÖZEL ÖZELLİK MÜHENDİSLİĞİ (Custom Transformer)
@@ -126,38 +153,41 @@ def build_preprocessor(X_sample, ordinal_mappings):
     return preprocessor
 
 # ==============================================================================
-# 3. YAN MENÜ (SIDEBAR) VE MODEL & HİPERPARAMETRE YÖNETİMİ
+# 3. YAN MENÜ (SIDEBAR) - MODEL & HİPERPARAMETRE YÖNETİMİ
 # ==============================================================================
-st.sidebar.header("⚙️ Veri ve Model Yapılandırması")
-uploaded_file = st.sidebar.file_uploader("Veri Setinizi Yükleyin (.xlsx veya .csv)", type=["xlsx", "csv"])
+st.sidebar.markdown("### ⚙️ Veri Yapılandırması")
+uploaded_file = st.sidebar.file_uploader("Veri Seti Yükle (.xlsx / .csv)", type=["xlsx", "csv"])
 
-target_col = st.sidebar.text_input("Hedef Değişken (Target)", value="calisma_durumu")
-drop_cols_input = st.sidebar.text_input("Silinecek ID Kolonları", value="sicil_no")
-leakage_cols_input = st.sidebar.text_input("Sızıntı (Leakage) Kolonları", value="cikis_tarihi, cikis_nedeni, aktif_calisan_mi")
+target_col = st.sidebar.text_input("Hedef Sütun (Target)", value="calisma_durumu")
+drop_cols_input = st.sidebar.text_input("Silinecek ID Sütunları", value="sicil_no")
+leakage_cols_input = st.sidebar.text_input("Sızıntı (Leakage) Sütunları", value="cikis_tarihi, cikis_nedeni, aktif_calisan_mi")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🤖 Model ve Hiperparametre Yönetimi")
+st.sidebar.markdown("### 🤖 Model Seçimi ve Hiperparametreler")
 
 # Model 1: Logistic Regression
 use_lr = st.sidebar.checkbox("Logistic Regression", value=True)
-lr_c = st.sidebar.slider("LR - C (Düzenlileştirme / Regularization)", 0.01, 10.0, 1.0, help="Küçük C değerleri modelin aşırı öğrenmesini engeller (güçlü ceza).")
+lr_c = st.sidebar.slider("LR - Düzenlileştirme (C)", 0.01, 10.0, 1.0, help="Küçük değerler aşırı öğrenmeyi engeller.")
 
 # Model 2: Random Forest
 use_rf = st.sidebar.checkbox("Random Forest", value=True)
-rf_n_estimators = st.sidebar.slider("RF - Ağaç Sayısı (n_estimators)", 50, 300, 150, help="Ormandaki toplam karar ağacı sayısı. Artırmak doğruluğu iyileştirir ama süreyi uzatır.")
-rf_max_depth = st.sidebar.slider("RF - Maksimum Derinlik (max_depth)", 3, 25, 10, help="Her ağacın detaya inme seviyesi. Çok derin olursa veriyi ezberler (overfitting).")
+rf_n_estimators = st.sidebar.slider("RF - Ağaç Sayısı", 50, 300, 150)
+rf_max_depth = st.sidebar.slider("RF - Maksimum Derinlik", 3, 25, 10)
 
-# Model 3: XGBoost
+# Model 3: Gradient Boosting
+use_gb = st.sidebar.checkbox("Gradient Boosting", value=True)
+gb_lr = st.sidebar.slider("GB - Öğrenme Hızı (Learning Rate)", 0.01, 0.3, 0.1)
+
+# Model 4: XGBoost
 use_xgb = st.sidebar.checkbox("XGBoost", value=True if XGB_AVAILABLE else False, disabled=not XGB_AVAILABLE)
-xgb_lr = st.sidebar.slider("XGB - Öğrenme Hızı (learning_rate)", 0.01, 0.3, 0.1, help="Modelin her adımda ne kadar hızlı öğreneceğini belirler.")
 
 # ==============================================================================
-# 4. ANA UYGULAMA AKIŞI VE SEKMELER (TABS)
+# 4. ANA AKIŞ VE SEKMELİ (TABS) YAPI
 # ==============================================================================
 if uploaded_file is not None:
     df_raw = load_data(uploaded_file)
     
-    # Temizlik ve Sızıntı Önleme
+    # Sızıntı Temizliği
     drop_list = [c.strip() for c in drop_cols_input.split(",") if c.strip()]
     leak_list = [c.strip() for c in leakage_cols_input.split(",") if c.strip()]
     all_drops = drop_list + leak_list
@@ -183,42 +213,45 @@ if uploaded_file is not None:
         X_test_fe = fe.transform(X_test)
         preprocessor = build_preprocessor(X_train_fe, ordinal_mappings)
 
-        # SEKMELİ YAPI (UX / UI İyileştirmesi)
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "📂 Veri Keşfi & EDA", 
-            "⚙️ Model Eğitimi & Optimizasyon", 
+        # Sekmeler (Modern UI)
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "📂 Keşifsel Veri Analizi (EDA)", 
+            "⚙️ Model Eğitimi & Voting", 
             "📈 İstatistiksel Değerlendirme", 
-            "🔍 Bireysel Risk Simülasyonu"
+            "🔍 SHAP Model Açıklanabilirliği",
+            "🎯 Bireysel Risk Simülasyonu"
         ])
 
         with tab1:
-            st.subheader("Veri Seti Ön İncelemesi ve Dağılımlar")
-            st.dataframe(df_raw.head())
+            st.subheader("Veri Seti Karakteristiği ve Dağılımlar")
+            st.dataframe(df_raw.head(), use_container_width=True)
             
             col1, col2 = st.columns(2)
             with col1:
-                st.write("**Hedef Değişken Dağılımı:**")
-                fig, ax = plt.subplots(figsize=(4, 3))
-                sns.countplot(x=y, ax=ax, palette="viridis")
+                st.write("**Hedef Değişken Sınıf Oranları:**")
+                fig, ax = plt.subplots(figsize=(5, 3))
+                sns.countplot(x=y, ax=ax, palette="crest")
                 st.pyplot(fig)
             with col2:
-                st.write("**Eksik Değer Analizi:**")
+                st.write("**Eksik Değer Matrisi:**")
                 missing_df = pd.DataFrame({"Eksik Sayısı": df_clean.isnull().sum()})
-                st.dataframe(missing_df[missing_df["Eksik Sayısı"] > 0])
+                st.dataframe(missing_df[missing_df["Eksik Sayısı"] > 0], use_container_width=True)
 
         with tab2:
-            st.subheader("Model Eğitimi ve Hiperparametre Yönetimi")
-            st.info("💡 Sol menüden değiştirdiğiniz hiperparametreler aşağıda anında derlenir.")
+            st.subheader("Topluluk (Voting) Model Yapılandırması")
+            st.markdown("Seçtiğin modellerin güçlerini birleştirerek daha kararlı tahminler üreten `VotingClassifier` kuruyoruz.")
             
-            if st.button("🚀 Modeli Şimdi Eğit / Güncelle"):
-                with st.spinner("Modeller eğitiliyor ve topluluk (Voting) yapısı kuruluyor..."):
+            if st.button("🚀 Modelleri Eğit / Güncelle", type="primary"):
+                with st.spinner("Modeller eğitiliyor ve boru hattı (Pipeline) kuruluyor..."):
                     active_estimators = []
                     if use_lr:
                         active_estimators.append(('lr', LogisticRegression(C=lr_c, max_iter=1000, random_state=42, class_weight='balanced')))
                     if use_rf:
                         active_estimators.append(('rf', RandomForestClassifier(n_estimators=rf_n_estimators, max_depth=rf_max_depth, random_state=42, class_weight='balanced')))
+                    if use_gb:
+                        active_estimators.append(('gb', GradientBoostingClassifier(learning_rate=gb_lr, random_state=42)))
                     if use_xgb and XGB_AVAILABLE:
-                        active_estimators.append(('xgb', XGBClassifier(learning_rate=xgb_lr, n_estimators=rf_n_estimators, max_depth=rf_max_depth, random_state=42)))
+                        active_estimators.append(('xgb', XGBClassifier(random_state=42)))
 
                     if not active_estimators:
                         st.warning("Lütfen sol menüden en az bir model seçin!")
@@ -232,16 +265,17 @@ if uploaded_file is not None:
 
                         final_pipeline.fit(X_train_fe, y_train)
                         
-                        # [PERFORMANS İYİLEŞTİRMESİ]: Modeli session_state içinde sakla (Tekrar eğitimi önler)
+                        # Oturum Hafızasına Kayıt (Gereksiz yeniden eğitimi önler)
                         st.session_state['trained_pipeline'] = final_pipeline
+                        st.session_state['X_train_fe'] = X_train_fe
                         st.session_state['X_test_fe'] = X_test_fe
                         st.session_state['y_test'] = y_test
                         st.session_state['X_test_raw'] = X_test
                         
-                        st.success("Model başarıyla eğitildi ve hafızaya alındı!")
+                        st.success("Tüm modeller başarıyla eğitildi ve oturum hafızasına kaydedildi!")
 
         with tab3:
-            st.subheader("İstatistiksel Performans ve Otomatik Yorumlar")
+            st.subheader("Model Performansı ve İstatistiksel Yorumlar")
             if 'trained_pipeline' in st.session_state:
                 pipeline = st.session_state['trained_pipeline']
                 xtest = st.session_state['X_test_fe']
@@ -252,61 +286,76 @@ if uploaded_file is not None:
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write("**Sınıflandırma Raporu**")
+                    st.write("**Sınıflandırma Raporu:**")
                     report = classification_report(ytest, y_pred, output_dict=True)
-                    st.dataframe(pd.DataFrame(report).transpose())
+                    st.dataframe(pd.DataFrame(report).transpose(), use_container_width=True)
                 with col2:
-                    st.write("**Karışıklık Matrisi (Confusion Matrix)**")
-                    fig, ax = plt.subplots(figsize=(4, 3))
+                    st.write("**Karışıklık Matrisi (Confusion Matrix):**")
+                    fig, ax = plt.subplots(figsize=(5, 3.5))
                     sns.heatmap(confusion_matrix(ytest, y_pred), annot=True, fmt='d', cmap='Blues', cbar=False, ax=ax)
                     st.pyplot(fig)
                 
-                # Otomatik İstatistiksel Yorum
                 auc = roc_auc_score(ytest, y_proba)
                 f1 = f1_score(ytest, y_pred, average='weighted')
-                st.markdown(f"""
-                ### 📊 İstatistiksel Değerlendirme Özeti:
-                - **ROC-AUC ({auc:.4f}):** Modelin pozitif ve negatif sınıfları ayırt etme gücü. 
-                - **F1-Score ({f1:.4f}):** Dengesiz sınıflarda hata oranlarını dengeli şekilde yansıtan referans metrik.
-                """)
                 
-                # Optuna Otomasyonu
-                if st.button("Optuna ile Otomatik Hiperparametre Aramasını Başlat"):
-                    with st.spinner("Optuna en iyi ağaç parametrelerini arıyor..."):
-                        def objective(trial):
-                            n_est = trial.suggest_int('n_estimators', 50, 150)
-                            max_d = trial.suggest_int('max_depth', 3, 10)
-                            clf = RandomForestClassifier(n_estimators=n_est, max_depth=max_d, class_weight='balanced', random_state=42)
-                            pipe = Pipeline([('prep', preprocessor), ('clf', clf)])
-                            pipe.fit(X_train_fe, y_train)
-                            return roc_auc_score(y_test, pipe.predict_proba(X_test_fe)[:, 1])
-
-                        study = optuna.create_study(direction='maximize')
-                        study.optimize(objective, n_trials=5)
-                        
-                        st.write(f"**En İyi Optuna Parametreleri:** {study.best_params}")
-                        fig_opt = optuna.visualization.plot_optimization_history(study)
-                        st.plotly_chart(fig_opt, use_container_width=True)
+                st.markdown(f"""
+                <div class="card">
+                    <h4>📊 Otomatik İstatistiksel Analiz Raporu</h4>
+                    <ul>
+                        <li><b>ROC-AUC Skoru ({auc:.4f}):</b> Modelin pozitif ve negatif sınıfları birbirinden ayırt etme kapasitesi oldukça başarılıdır.</li>
+                        <li><b>F1-Score ({f1:.4f}):</b> Dengesiz sınıflar göz önüne alındığında modelin genel kararlılığını doğrular.</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                st.warning("⚠️ Lütfen önce 'Model Eğitimi & Optimizasyon' sekmesinden modeli eğitin.")
+                st.info("⚠️ Lütfen önce 'Model Eğitimi' sekmesinden modeli çalıştırın.")
 
         with tab4:
-            st.subheader("🔍 Bireysel Çalışan Risk Simülasyonu")
-            if 'trained_pipeline' in st.session_state:
-                st.write("Test setinden rastgele bir çalışanın verisini simüle ederek risk skorunu inceleyin:")
-                sample_idx = st.slider("Çalışan İndeksi Seçin", 0, len(st.session_state['X_test_raw'])-1, 0)
-                
-                single_row = st.session_state['X_test_raw'].iloc[[sample_idx]]
-                st.dataframe(single_row)
-                
-                if st.button("Risk Tahminini Hesapla"):
-                    pred_prob = st.session_state['trained_pipeline'].predict_proba(st.session_state['X_test_fe'].iloc[[sample_idx]])[:, 1][0]
-                    st.metric(label="Ayrılma (Churn) Olasılığı", value=f"%{pred_prob*100:.1f}")
-                    if pred_prob > 0.5:
-                        st.error("⚠️ Yüksek Risk: Bu çalışanın ayrılma olasılığı %50'nin üzerinde!")
-                    else:
-                        st.success("✅ Düşük Risk: Çalışan şirkette kalmaya devam etme eğiliminde.")
+            st.subheader("🔍 Model Açıklanabilirliği (SHAP Değerleri)")
+            st.markdown("Modelin kararları hangi özelliklere (maaş, kıdem, yaş vb.) dayanarak verdiğini inceleyin.")
+            if 'trained_pipeline' in st.session_state and SHAP_AVAILABLE:
+                if st.button("SHAP Analizini Hesapla"):
+                    with st.spinner("SHAP değerleri hesaplanıyor..."):
+                        # Alt modeli veya ağaç tabanlı bileşeni alarak özet çıkaralım
+                        model_step = st.session_state['trained_pipeline'].named_steps['model']
+                        prep_step = st.session_state['trained_pipeline'].named_steps['prep']
+                        fe_step = st.session_state['trained_pipeline'].named_steps['fe']
+                        
+                        transformed_data = prep_step.transform(fe_step.transform(X_test))
+                        
+                        # Eğer Voting içinde Random Forest varsa onun üzerinden SHAP çıkaralım
+                        rf_est = dict(model_step.estimators_).get('rf', None)
+                        if rf_est:
+                            explainer = shap.TreeExplainer(rf_est)
+                            shap_values = explainer.shap_values(transformed_data)
+                            
+                            fig, ax = plt.subplots(figsize=(8, 5))
+                            shap.summary_plot(shap_values[1] if isinstance(shap_values, list) else shap_values, transformed_data, show=False)
+                            st.pyplot(fig)
+                        else:
+                            st.warning("SHAP görselleştirmesi için model grubunda Random Forest bulunmalıdır.")
             else:
-                st.info("Önce modeli eğitmeniz gerekmektedir.")
+                st.info("Lütfen önce modeli eğitin (SHAP kütüphanesinin yüklü olduğundan emin olun).")
+
+        with tab5:
+            st.subheader("🎯 Bireysel Çalışan Risk Simülasyonu")
+            if 'trained_pipeline' in st.session_state:
+                sample_idx = st.slider("Test Setinden Çalışan Seçin", 0, len(st.session_state['X_test_raw'])-1, 0)
+                single_row = st.session_state['X_test_raw'].iloc[[sample_idx]]
+                st.dataframe(single_row, use_container_width=True)
+                
+                if st.button("Risk Skorunu Hesapla", type="primary"):
+                    pred_prob = st.session_state['trained_pipeline'].predict_proba(st.session_state['X_test_fe'].iloc[[sample_idx]])[:, 1][0]
+                    
+                    col_m1, col_m2 = st.columns(2)
+                    with col_m1:
+                        st.metric(label="Ayrılma (Churn) Olasılığı", value=f"%{pred_prob*100:.1f}")
+                    with col_m2:
+                        if pred_prob > 0.5:
+                            st.error("⚠️ Yüksek Risk Grubu!")
+                        else:
+                            st.success("✅ Düşük Risk / Güvenli.")
+            else:
+                st.info("Simülasyon için önce modeli eğtmelisiniz.")
 else:
-    st.info("👈 Başlamak için sol menüden veri setinizi yükleyin.")
+    st.info("👈 Başlamak için lütfen sol menüden veri setinizi yükleyin.")
