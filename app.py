@@ -17,7 +17,7 @@ try:
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "optuna", "xgboost", "streamlit"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "optuna", "xgboost", "streamlit", "plotly"])
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -230,7 +230,7 @@ if uploaded_file is not None:
 
                     automatic_result_interpreter(y_test, y_pred, y_proba)
                     
-                    # Optuna Optimizasyon Grafikleri
+                    # Optuna Optimizasyon Grafikleri (Plotly ile hatasız ve interaktif)
                     st.subheader("📊 Hiperparametre Optimizasyon ve Etki Grafikleri (Optuna)")
                     def objective(trial):
                         n_est = trial.suggest_int('n_estimators', 50, 200)
@@ -243,11 +243,11 @@ if uploaded_file is not None:
                     study = optuna.create_study(direction='maximize')
                     study.optimize(objective, n_trials=8)
                     
-                    fig1 = optuna.visualization.matplotlib.plot_optimization_history(study)
-                    st.pyplot(fig1)
+                    fig_opt1 = optuna.visualization.plot_optimization_history(study)
+                    st.plotly_chart(fig_opt1, use_container_width=True)
                     
-                    fig2 = optuna.visualization.matplotlib.plot_param_importances(study)
-                    st.pyplot(fig2)
+                    fig_opt2 = optuna.visualization.plot_param_importances(study)
+                    st.plotly_chart(fig_opt2, use_container_width=True)
 else:
     st.info("👈 Başlamak için sol menüden veri setinizi yükleyin.")
 
@@ -271,5 +271,5 @@ st.subheader("⚠️ Düşebileceğiniz Kritik Hatalar (Pitfalls)")
 st.markdown("""
 - **Veri Sızıntısı (Data Leakage):** Gelecekteki bilgiyi (örneğin işten ayrılma tarihi) modele vermeyin.
 - **Test Setini Kirletmek:** Ölçeklendirme (`StandardScaler`) işlemini tüm veriye değil, sadece eğitim setine (`fit_transform`) uygulamalısınız (Yukarıdaki Pipeline bunu sizin için otomatik yapar).
-- **Dengesiz Sınıf Yanılgısı:** Azınlık sınıfı göz ardı etmemek için `class_weight='balanced'` parametresini mutlaka aktif tutun.
+- **Dengesiz Sınıf Yanılgısı:** Azınlık sınıfı göz ardı etmek için `class_weight='balanced'` parametresini mutlaka aktif tutun.
 """)
