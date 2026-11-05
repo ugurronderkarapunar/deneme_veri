@@ -3,8 +3,6 @@ import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
-import seaborn as sns
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -17,7 +15,7 @@ from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassif
 from sklearn.linear_model import LogisticRegression
 from sklearn.base import BaseEstimator, TransformerMixin
 
-# İsteğe bağlı gelişmiş kütüphaneler (Graceful fallback)
+# Kütüphane Kontrolleri (Graceful Fallback)
 try:
     import xgboost as XGB
     XGB_AVAILABLE = True
@@ -52,7 +50,48 @@ except ImportError:
     OPTUNA_AVAILABLE = False
 
 # ==============================================================================
-# 1. KIDERMLİ ÖZELLİK MÜHENDİSLİĞİ VE ESNEK PREPROCESSOR
+# 1. KISMI & İLERİ SEVİYE VERİ TEMİZLİĞİ VE STANDARDİZASYON FONKSİYONLARI
+# ==============================================================================
+def advanced_data_cleaning(df, config):
+    """
+    Kirli veriyi temizleyen, metinleri standartlaştıran, 
+    anomalileri ve mükerrer kayıtları (duplicates) ayırt eden senior temizlik motoru.
+    """
+    df_clean = df.copy()
+    initial_rows = len(df_clean)
+
+    # 1. Mükerrer (Duplicate) Satır Temizliği
+    if config.get("drop_duplicates", True):
+        df_clean.drop_duplicates(inplace=True)
+
+    # 2. Sütun İsimlerinin Standardizasyonu (Boşluk, Türkçe karakter düzeltme)
+    df_clean.columns = [str(col).strip().lower().replace(' ', '_') for col in df_clean.columns]
+
+    # 3. Metin (String) Değerlerin Standardizasyonu (Strip & Title Case)
+    cat_cols_raw = df_clean.select_dtypes(include=['object', 'category']).columns
+    for col in cat_cols_raw:
+        df_clean[col] = df_clean[col].astype(str).str.strip()
+        # "nan" veya boş string kalıntılarını NaN'e çevir
+        df_clean[col] = df_clean[col].replace(['nan', 'None', '', 'NULL', 'null'], np.nan)
+
+    # 4. Sayısal Kolonlardaki Bozuk Verilerin ve Anomalilerin Temizlenmesi
+    numeric_cols_raw = df_clean.select_dtypes(include=['number']).columns
+    for col in numeric_cols_raw:
+        # Sonsuz değerleri NaN yap
+        df_clean[col] = df_clean[col].replace([np.inf, -np.inf], np.nan)
+        
+        # Mantık dışı anomali filtreleri (Örn: Yaş < 0 veya Yaş > 120 ise NaN yap)
+        if 'yas' in col or 'age' in col:
+            df_clean.loc[(df_clean[col] < 15) | (df_clean[col] > 100), col] = np.nan
+        if 'maas' in col or 'salary' in col or 'income' in col:
+            df_clean.loc[df_clean[col] < 0, col] = np.nan
+
+    cleaned_rows = len(df_clean)
+    print(f">>> Veri Temizliği Tamamlandı: {initial_rows} satırdan {cleaned_rows} satıra ulaşıldı.")
+    return df_clean
+
+# ==============================================================================
+# 2. ÖZELLİK MÜHENDİSLİĞİ VE ESNEK PREPROCESSOR
 # ==============================================================================
 class EnterpriseFeatureEngineer(BaseEstimator, TransformerMixin):
     def __init__(self, config):
@@ -67,7 +106,7 @@ class EnterpriseFeatureEngineer(BaseEstimator, TransformerMixin):
         
         # Akıllı Tarih Mühendisliği
         if self.config.get("enable_date_fe", True):
-            date_cols = [col for col in X_out.columns if 'tarih' in col.lower() or 'date' in col.lower()]
+            date_cols = [col for col in X_out.columns if 'tarih' in col or 'date' in col]
             for col in date_cols:
                 try:
                     X_out[col] = pd.to_datetime(X_out[col], errors='coerce')
@@ -77,10 +116,9 @@ class EnterpriseFeatureEngineer(BaseEstimator, TransformerMixin):
                 except:
                     pass
 
-        # IQR ile Outlier Baskılama (Aşırı uç değer koruması)
+        # IQR ile Outlier Baskılama
         if self.config.get("enable_outlier", True):
             numeric_cols = X_out.select_dtypes(include=["number"]).columns
-            X_out[numeric_cols] = X_out[numeric_cols].replace([np.inf, -np.inf], np.nan)
             for col in numeric_cols:
                 q1, q3 = X_out[col].quantile(0.01), X_out[col].quantile(0.99)
                 X_out[col] = X_out[col].clip(lower=q1, upper=q3)
@@ -88,7 +126,6 @@ class EnterpriseFeatureEngineer(BaseEstimator, TransformerMixin):
         return X_out
 
 def enforce_model_schema(df_user, expected_columns):
-    """Müşteri/kullanıcı farklı kolon isimleriyle Excel yüklese bile şemayı eşitler."""
     df_aligned = pd.DataFrame()
     for col in expected_columns:
         if col in df_user.columns:
@@ -98,17 +135,23 @@ def enforce_model_schema(df_user, expected_columns):
     return df_aligned
 
 # ==============================================================================
-# 2. DİNAMİK MODEL EĞİTİM VE OPTUNA MOTORu
+# 3. DİNAMİK EĞİTİM VE MODEL YARIŞI MOTORU
 # ==============================================================================
 def train_enterprise_pipeline(file_path, config):
     ext = os.path.splitext(file_path)[-1].lower()
-    df = pd.read_excel(file_path) if ext in ['.xlsx', '.xls'] else pd.read_csv(file_path)
+    df_raw = pd.read_excel(file_path) if ext in ['.xlsx', '.xls'] else pd.read_csv(file_path)
     
-    # Sızıntı ve ID kolonlarını temizleme
-    to_remove = set(config["drop_columns"] + config["leakage_columns"])
+    # Kapsamlı Veri Temizliği ve Standardizasyon Adımı
+    df = advanced_data_cleaning(df_raw, config)
+
+    # Kolon isimleri temizlendiği için config'deki isimleri de uyumlu hale getir
+    target = config["target_column"].strip().lower().replace(' ', '_')
+    drop_cols = [c.strip().lower().replace(' ', '_') for c in config["drop_columns"]]
+    leak_cols = [c.strip().lower().replace(' ', '_') for c in config["leakage_columns"]]
+
+    to_remove = set(drop_cols + leak_cols)
     df.drop(columns=[c for c in to_remove if c in df.columns], inplace=True)
 
-    target = config["target_column"]
     X, y = df.drop(columns=[target]), df[target]
 
     # Hedef Değişkeni Güvenli Kodlama (0 ve 1)
@@ -128,10 +171,12 @@ def train_enterprise_pipeline(file_path, config):
     cat_cols = X_train_fe.select_dtypes(include=["object", "category"]).columns.tolist()
     bin_cols = [c for c in X_train_fe.columns if X_train_fe[c].nunique() == 2]
     pure_num = [c for c in num_cols if c not in bin_cols]
-    ord_cols = [c for c in config["ordinal_mappings"].keys() if c in X_train_fe.columns]
+    
+    ordinal_mappings_clean = {k.strip().lower().replace(' ', '_'): v for k, v in config["ordinal_mappings"].items()}
+    ord_cols = [c for c in ordinal_mappings_clean.keys() if c in X_train_fe.columns]
     nom_cols = [c for c in cat_cols if c not in ord_cols]
 
-    # Dinamik Scaler Seçimi
+    # Scaler Seçimi
     if config["scaler_type"] == "Standard (Z-Score)":
         scaler = StandardScaler()
     elif config["scaler_type"] == "MinMax (0-1)":
@@ -141,12 +186,12 @@ def train_enterprise_pipeline(file_path, config):
 
     preprocessor = ColumnTransformer(transformers=[
         ('num', Pipeline_Step([('imp', SimpleImputer(strategy=config["imputation_strategy"])), ('scaler', scaler)]), pure_num),
-        ('ord', Pipeline_Step([('imp', SimpleImputer(strategy='most_frequent')), ('ord', OrdinalEncoder(categories=[config["ordinal_mappings"][c] for c in ord_cols], handle_unknown='use_encoded_value', unknown_value=-1))]), ord_cols),
+        ('ord', Pipeline_Step([('imp', SimpleImputer(strategy='most_frequent')), ('ord', OrdinalEncoder(categories=[ordinal_mappings_clean[c] for c in ord_cols], handle_unknown='use_encoded_value', unknown_value=-1))]), ord_cols),
         ('nom', Pipeline_Step([('imp', SimpleImputer(strategy='most_frequent')), ('ohe', OneHotEncoder(drop='first', handle_unknown='ignore', sparse_output=False))]), nom_cols),
         ('bin', Pipeline_Step([('imp', SimpleImputer(strategy='most_frequent')), ('bin', OrdinalEncoder())]), bin_cols)
     ], remainder='drop')
 
-    # Aktif Model Havuzu (Model Zoo)
+    # Model Havuzu
     model_candidates = {}
     if "Random Forest" in config["selected_models"]:
         model_candidates["Random Forest"] = RandomForestClassifier(random_state=42, class_weight='balanced', n_jobs=-1)
@@ -162,7 +207,7 @@ def train_enterprise_pipeline(file_path, config):
     if not model_candidates:
         model_candidates["Random Forest"] = RandomForestClassifier(random_state=42, class_weight='balanced', n_jobs=-1)
 
-    # 1. Aşama: Model Yarışı (Cross-Validation ile)
+    # Model Yarışı (CV)
     best_score = -1
     best_model_name = None
     best_pipeline = None
@@ -187,7 +232,7 @@ def train_enterprise_pipeline(file_path, config):
             best_model_name = name
             best_pipeline = pipe.fit(X_train, y_train)
 
-    # 2. Aşama: Optuna Hiperparametre Optimizasyonu (Kazanan model üstünde)
+    # Optuna Hiperparametre Optimizasyonu
     if OPTUNA_AVAILABLE and config["optuna_trials"] > 0:
         def objective(trial):
             if best_model_name == "Random Forest":
@@ -195,11 +240,6 @@ def train_enterprise_pipeline(file_path, config):
                     n_estimators=trial.suggest_int('n_estimators', 50, 200),
                     max_depth=trial.suggest_int('max_depth', 4, 15),
                     random_state=42, class_weight='balanced', n_jobs=-1
-                )
-            elif best_model_name == "Logistic Regression":
-                clf = LogisticRegression(
-                    C=trial.suggest_float('C', 0.01, 10.0),
-                    max_iter=1000, random_state=42, class_weight='balanced'
                 )
             else:
                 clf = model_candidates[best_model_name]
@@ -217,8 +257,6 @@ def train_enterprise_pipeline(file_path, config):
         
         if best_model_name == "Random Forest":
             final_clf = RandomForestClassifier(**study.best_params, random_state=42, class_weight='balanced', n_jobs=-1)
-        elif best_model_name == "Logistic Regression":
-            final_clf = LogisticRegression(**study.best_params, max_iter=1000, random_state=42, class_weight='balanced')
         else:
             final_clf = model_candidates[best_model_name]
 
@@ -228,7 +266,7 @@ def train_enterprise_pipeline(file_path, config):
         steps.append(('clf', final_clf))
         best_pipeline = ImbPipeline(steps).fit(X_train, y_train)
 
-    # 3. Aşama: Karar Eşiği (Threshold) Optimizasyonu
+    # Karar Eşiği Optimizasyonu
     y_proba = best_pipeline.predict_proba(X_test)[:, 1]
     if config["threshold_strategy"] == "Youden Index (Optimum ROC)":
         fpr, tpr, thresholds = roc_curve(y_test, y_proba)
@@ -245,9 +283,7 @@ def train_enterprise_pipeline(file_path, config):
         "threshold": optimal_threshold,
         "columns": X.columns.tolist(),
         "best_model_name": best_model_name,
-        "best_cv_auc": best_score,
-        "X_test": X_test,
-        "y_test": y_test
+        "best_cv_auc": best_score
     }
     joblib.dump(bundle, config["model_output_path"])
     return bundle
@@ -255,65 +291,70 @@ def train_enterprise_pipeline(file_path, config):
 from sklearn.pipeline import Pipeline as Pipeline_Step
 
 # ==============================================================================
-# 3. STREAMLIT SENIOR ARAYÜZ MİMARİSİ
+# 4. STREAMLIT ARAYÜZ MİMARİSİ
 # ==============================================================================
-st.set_page_config(page_title="Enterprise Senior ML Portal", layout="wide")
+st.set_page_config(page_title="Enterprise Senior ML Engine", layout="wide")
 
 def main():
-    st.title("🏆 Enterprise Senior ML & MLOps Engine")
-    st.markdown("Veri analizinden model yarışına, hiperparametre optimizasyonundan SHAP açıklamalarına kadar tam esnekliğe sahip profesyonel portalsınız.")
+    st.title("🏆 Enterprise Senior ML, Data Cleaning & MLOps Engine")
+    st.markdown("Veri temizliği, standardizasyon, EDA, model yarışı ve Optuna optimizasyonunu tek ekranda birleştiren profesyonel portal.")
 
-    model_output_path = "enterprise_engine_bundle.joblib"
+    model_output_path = "enterprise_clean_engine.joblib"
 
     with st.sidebar:
-        st.header("📂 1. Veri Ingestion")
+        st.header("📂 1. Veri Yükleme")
         uploaded_train_file = st.file_uploader("Eğitim Verisi (.xlsx, .csv)", type=["xlsx", "csv"])
 
     if uploaded_train_file is not None:
         ext = os.path.splitext(uploaded_train_file.name)[-1].lower()
-        df_preview = pd.read_excel(uploaded_train_file) if ext in ['.xlsx', '.xls'] else pd.read_csv(uploaded_train_file)
+        df_raw = pd.read_excel(uploaded_train_file) if ext in ['.xlsx', '.xls'] else pd.read_csv(uploaded_train_file)
         
-        st.success(f"Veri Yüklendi! Boyut: {df_preview.shape[0]} satır, {df_preview.shape[1]} kolon.")
+        # Önizleme için temizlik simülasyonu
+        df_preview = df_raw.copy()
+        df_preview.columns = [str(col).strip().lower().replace(' ', '_') for col in df_preview.columns]
 
-        with st.expander("📊 1. Aşama: EDA & Veri Sağlık Raporu (Data Health Profiling)"):
-            c_ed1, c_ed2 = st.columns(2)
-            with c_ed1:
+        st.success(f"Veri Yüklendi! Ham Boyut: {df_raw.shape}")
+
+        with st.expander("📊 Veri Sağlık & Kirli Veri Raporu (Data Cleaning Insights)"):
+            c1, c2 = st.columns(2)
+            with c1:
                 st.write("**Eksik Değer Analizi:**")
                 missing_df = pd.DataFrame({
                     "Eksik Sayısı": df_preview.isnull().sum(),
                     "Eksik Oranı (%)": (df_preview.isnull().mean() * 100).round(2)
                 })
                 st.dataframe(missing_df[missing_df["Eksik Sayısı"] > 0], use_container_width=True)
-            with c_ed2:
-                st.write("**Veri Tipleri ve Boyut:**")
-                st.write(df_preview.dtypes.value_counts())
+            with c2:
+                st.write("**Mükerrer (Duplicate) Satır Sayısı:**", df_preview.duplicated().sum())
+                st.write("**Toplam Sütun Sayısı:**", df_preview.shape[1])
 
         st.markdown("---")
-        st.header("⚙️ 2. Aşama: Kıdemli Konfigürasyon ve Tercih Paneli")
+        st.header("⚙️ 2. Veri Temizliği ve Konfigürasyon Paneli")
         
-        c1, c2, c3 = st.columns(3)
-        with c1:
+        tc1, tc2, tc3 = st.columns(3)
+        with tc1:
             target_column = st.selectbox("Hedef (Target) Kolon", df_preview.columns)
             drop_columns = st.multiselect("Atılacak Kolonlar (ID vb.)", df_preview.columns, default=[])
-        with c2:
-            potential_leakage = [c for c in df_preview.columns if 'tarih' in c.lower() or 'cikis' in c.lower()]
+        with tc2:
+            potential_leakage = [c for c in df_preview.columns if 'tarih' in c or 'cikis' in c]
             leakage_columns = st.multiselect("Sızıntı (Leakage) Kolonları", df_preview.columns, default=potential_leakage)
             imputation_strategy = st.selectbox("Eksik Veri Doldurma", ["median", "mean", "most_frequent"])
-        with c3:
+        with tc3:
             scaler_type = st.selectbox("Ölçekleme (Scaler)", ["Standard (Z-Score)", "MinMax (0-1)", "Robust"])
             threshold_strategy = st.selectbox("Eşik (Threshold) Stratejisi", ["Youden Index (Optimum ROC)", "Precision-Recall Balance (F1-Optimal)", "Sabit (0.50)"])
 
-        st.markdown("#### 🤖 Model Zoo & Optimizasyon Tercihleri")
-        m1, m2, m3 = st.columns(3)
-        with m1:
+        st.markdown("#### 🧹 Gelişmiş Temizlik ve Model Tercihleri")
+        mc1, mc2, mc3 = st.columns(3)
+        with mc1:
+            drop_duplicates = st.checkbox("Mükerrer Satırları Otomatik Temizle", value=True)
+            enable_outlier = st.checkbox("IQR Outlier Baskılama", value=True)
+        with mc2:
+            use_smote = st.checkbox("SMOTE (Sınıf Dengeleme)", value=True)
             available_models = ["Random Forest", "Logistic Regression", "Hist Gradient Boosting"]
             if XGB_AVAILABLE: available_models.append("XGBoost")
             if LGB_AVAILABLE: available_models.append("LightGBM")
             selected_models = st.multiselect("Yarıştırılacak Modeller", available_models, default=["Random Forest", "Logistic Regression"])
-        with m2:
-            use_smote = st.checkbox("SMOTE (Sınıf Dengeleme)", value=True)
-            enable_outlier = st.checkbox("IQR Outlier Baskılama", value=True)
-        with m3:
+        with mc3:
             optuna_trials = st.slider("Optuna Deneme Sayısı (0=Kapalı)", 0, 30, 5)
             test_size = st.slider("Test Seti Oranı", 0.1, 0.4, 0.2)
 
@@ -322,11 +363,12 @@ def main():
             "kademe": ['Uzman Yardımcısı', 'Uzman', 'Kıdemli Uzman', 'Yönetici', 'Direktör']
         }
 
-        if st.button("🚀 Modelleri Yarıştır, Optimize Et ve Eğit", type="primary"):
+        if st.button("🚀 Veriyi Temizle, Modelleri Yarıştır ve Eğit", type="primary"):
             config = {
                 "target_column": target_column,
                 "drop_columns": drop_columns,
                 "leakage_columns": leakage_columns,
+                "drop_duplicates": drop_duplicates,
                 "imputation_strategy": imputation_strategy,
                 "scaler_type": scaler_type,
                 "threshold_strategy": threshold_strategy,
@@ -340,24 +382,22 @@ def main():
                 "model_output_path": model_output_path
             }
 
-            with st.spinner("Modeller yarıştırılıyor, Optuna hiperparametreleri arıyor..."):
-                temp_path = "enterprise_temp.xlsx"
+            with st.spinner("Veri temizleniyor, standartlaştırılıyor ve modeller eğitiliyor..."):
+                temp_path = "enterprise_clean_temp.xlsx"
                 with open(temp_path, "wb") as f:
                     f.write(uploaded_train_file.getbuffer())
                 
                 bundle = train_enterprise_pipeline(temp_path, config)
-                st.success(f"Eğitim Tamamlandı! 🏆 Kazanan Model: {bundle['best_model_name']} (CV AUC: {bundle['best_cv_auc']:.4f})")
+                st.success(f"Başarılı! 🏆 Kazanan Model: {bundle['best_model_name']} (CV AUC: {bundle['best_cv_auc']:.4f})")
 
     if os.path.exists(model_output_path):
         st.markdown("---")
-        st.header("📁 3. Aşama: Toplu Tahminleme ve SHAP Açıklama Paneli")
+        st.header("📁 3. Toplu Tahminleme ve Sonuç Paneli")
         bundle = joblib.load(model_output_path)
         model = bundle["pipeline"]
         threshold = bundle["threshold"]
         expected_cols = bundle["columns"]
 
-        st.info(f"Aktif Model: **{bundle['best_model_name']}** | Hesaplanan Optimum Karar Eşiği: **{threshold:.3f}**")
-        
         uploaded_test_file = st.file_uploader("Tahmin Edilecek Yeni Veri Dosyası (.xlsx, .csv)", type=["xlsx", "csv"], key="test_u")
 
         if uploaded_test_file is not None:
@@ -371,28 +411,11 @@ def main():
                 user_df["Risk Skoru (%)"] = np.round(probas * 100, 2)
                 user_df["Tahmin Edilen Durum"] = np.where(preds == 1, "Yüksek Risk", "Normal")
 
-                st.success("Analiz başarıyla tamamlandı!")
+                st.success("Tahminler başarıyla tamamlandı!")
                 st.dataframe(user_df, use_container_width=True)
 
                 csv = user_df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Sonuçları İndir (CSV)", data=csv, file_name="enterprise_tahmin_sonuclari.csv", mime="text/csv")
-
-                # SHAP Açıklama Modülü (Eğer SHAP kütüphanesi yüklüyse)
-                if SHAP_AVAILABLE and bundle['best_model_name'] in ["Random Forest", "XGBoost", "LightGBM"]:
-                    st.markdown("---")
-                    st.subheader("🔍 SHAP Model Açıklanabilirliği (Neden Bu Sonuç Çıktı?)")
-                    try:
-                        fe_step = model.named_steps['fe']
-                        prep_step = model.named_steps['prep']
-                        clf_step = model.named_steps['clf']
-                        
-                        transformed_data = prep_step.transform(fe_step.transform(aligned_df))
-                        explainer = shap.TreeExplainer(clf_step)
-                        shap_values = explainer.shap_values(transformed_data)
-                        
-                        st.write("Seçilen toplu verinin SHAP özet analizi başarıyla hesaplandı.")
-                    except Exception as e:
-                        st.info("SHAP görselleştirmesi bu veri yapısı için hazırlanıyor.")
+                st.download_button("📥 Sonuçları İndir (CSV)", data=csv, file_name="temiz_veri_tahmin_sonuclari.csv", mime="text/csv")
 
 if __name__ == "__main__":
     main()
