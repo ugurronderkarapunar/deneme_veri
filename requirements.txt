@@ -7,3 +7,4 @@ seaborn
 optuna
 xgboost
 openpyxl
+plotly
