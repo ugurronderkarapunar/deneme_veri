@@ -40,7 +40,7 @@ CONFIG = {
 }
 
 # ==============================================================================
-# 2. AKILLI ÖZELLİK MÜHENDİSLİĞİ VE ŞEMA UYUMLULAŞTIRMA (SCHEMA ENFORCEMENT)
+# 2. AKILLI ÖZELLİK MÜHENDİSLİĞİ VE ŞEMA UYUMLULAŞTIRMA
 # ==============================================================================
 class UltimatePreprocessor(BaseEstimator, TransformerMixin):
     def __init__(self, ordinal_mappings=None):
@@ -74,10 +74,6 @@ class UltimatePreprocessor(BaseEstimator, TransformerMixin):
         return X_out
 
 def enforce_model_schema(df_user, expected_columns):
-    """
-    Kullanıcı farklı formatta Excel yüklese bile sistemi patlatmaz; 
-    eksik kolonlara NaN basar, fazlalıkları eler, sırayı eşitler.
-    """
     df_aligned = pd.DataFrame()
     for col in expected_columns:
         if col in df_user.columns:
@@ -87,7 +83,7 @@ def enforce_model_schema(df_user, expected_columns):
     return df_aligned
 
 # ==============================================================================
-# 3. OTOMATİK EĞİTİM VE OPTUNA MOTORU
+# 3. OTOMATİK EĞİTİM VE OPTUNA MOTORU (DÜZELTİLDİ)
 # ==============================================================================
 def train_pipeline(file_path):
     ext = os.path.splitext(file_path)[-1].lower()
@@ -98,8 +94,18 @@ def train_pipeline(file_path):
 
     target = CONFIG["target_column"]
     X, y = df.drop(columns=[target]), df[target]
+
+    # --- HATA ÇÖZÜMÜ: Hedef değişkeni güvenli bir şekilde 0 ve 1'e kodlama ---
     if y.dtype == 'object' or isinstance(y.dtype, pd.CategoricalDtype):
-        y = y.astype('category').cat.codes
+        # Eğer metinsel ise, alfabetik veya benzersiz değerlere göre sırayla 0 ve 1 yapıyoruz
+        # Örn: 'Aktif' -> 0, 'Ayrıldı' -> 1 (veya tam tersi, kategori koduna dönüştürülür)
+        y = y.astype('category')
+        # Modelin pozitif sınıfı doğru anlaması için kategorileri sayıya çeviriyoruz
+        y = y.cat.codes
+    
+    # Eğer y değerleri 0 ve 1 dışında bir şeyse (örn: 1 ve 2) kesinlikle 0 ve 1 aralığına çekiyoruz:
+    y = np.where(y == y.min(), 0, 1)
+    y = pd.Series(y)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=CONFIG["test_size"], random_state=CONFIG["random_state"], stratify=y
@@ -180,7 +186,6 @@ def main():
         if uploaded_train_file is not None:
             if st.button("Modeli Eğit ve Kaydet"):
                 with st.spinner("Model eğitiliyor..."):
-                    # Geçici olarak kaydet
                     with open("temp_train.xlsx", "wb") as f:
                         f.write(uploaded_train_file.getbuffer())
                     train_pipeline("temp_train.xlsx")
@@ -203,7 +208,6 @@ def main():
         st.write("Yüklenen Ham Veri Önizlemesi:", user_df.head(3))
 
         if st.button("Tahminleri Çalıştır"):
-            # Şema Uyumlandırma (Schema Alignment)
             aligned_df = enforce_model_schema(user_df, expected_cols)
             
             probas = model.predict_proba(aligned_df)[:, 1]
