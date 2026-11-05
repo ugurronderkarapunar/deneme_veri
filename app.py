@@ -162,10 +162,11 @@ use_xgb = st.sidebar.checkbox("XGBoost", value=True if XGB_AVAILABLE else False,
 if uploaded_file is not None:
     df_raw = load_data(uploaded_file)
     
+    # Güvenli Temizlik ve df_clean Tanımı
     drop_list = [c.strip() for c in drop_cols_input.split(",") if c.strip()]
     leak_list = [c.strip() for c in leakage_cols_input.split(",") if c.strip()]
     all_drops = drop_list + leak_list
-    df_clean = df_raw.drop(columns=[c for c in all_drops if c in df_clean.columns], errors='ignore')
+    df_clean = df_raw.drop(columns=[c for c in all_drops if c in df_raw.columns], errors='ignore')
     
     if target_col not in df_clean.columns:
         st.error(f"Hata: '{target_col}' sütunu veri setinde bulunamadı!")
@@ -301,7 +302,6 @@ if uploaded_file is not None:
                 with col2:
                     st.write("**Modern İnteraktif Karışıklık Matrisi (Heatmap):**")
                     cm = confusion_matrix(ytest, y_pred_custom)
-                    # px.imshow kullanarak modern ve hatasız interaktif ısı haritası
                     fig_cm = px.imshow(
                         cm, 
                         text_auto=True, 
