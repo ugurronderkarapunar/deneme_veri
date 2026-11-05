@@ -213,4 +213,180 @@ if uploaded_file is not None:
                 st.write("**Eksik Değer Analizi:**")
                 missing_df = df_clean.isnull().sum().reset_index()
                 missing_df.columns = ['Sütun', 'Eksik Sayısı']
-                missing_df = missing_df[missing_df['Eks
+                missing_df = missing_df[missing_df['Eksik Sayısı'] > 0]
+                if not missing_df.empty:
+                    fig_miss = px.bar(missing_df, x='Sütun', y='Eksik Sayısı', color='Eksik Sayısı', color_continuous_scale='Reds')
+                    st.plotly_chart(fig_miss, use_container_width=True)
+                else:
+                    st.success("Tebrikler! Veri setinde eksik değer bulunmuyor.")
+
+        with tab2:
+            st.subheader("Topluluk (Voting) Model Yapılandırıcı")
+            st.markdown("Seçilen tüm algoritmaların olasılıklarını birleştirerek en kararlı kararları üreten mimari.")
+            
+            if st.button("🚀 Modelleri Eğit ve Kaydet", type="primary"):
+                with st.spinner("Modeller eğitiliyor..."):
+                    active_estimators = []
+                    individual_models = {}
+                    
+                    if use_lr:
+                        m = LogisticRegression(C=lr_c, max_iter=1000, random_state=42, class_weight='balanced')
+                        active_estimators.append(('lr', m))
+                        individual_models['Logistic Regression'] = m
+                    if use_rf:
+                        m = RandomForestClassifier(n_estimators=rf_n_estimators, max_depth=rf_max_depth, random_state=42, class_weight='balanced')
+                        active_estimators.append(('rf', m))
+                        individual_models['Random Forest'] = m
+                    if use_gb:
+                        m = GradientBoostingClassifier(learning_rate=gb_lr, random_state=42)
+                        active_estimators.append(('gb', m))
+                        individual_models['Gradient Boosting'] = m
+                    if use_xgb and XGB_AVAILABLE:
+                        m = XGBClassifier(random_state=42)
+                        active_estimators.append(('xgb', m))
+                        individual_models['XGBoost'] = m
+
+                    if not active_estimators:
+                        st.warning("Lütfen sol menüden en az bir model seçin!")
+                    else:
+                        voting_clf = VotingClassifier(estimators=active_estimators, voting='soft')
+                        final_pipeline = Pipeline([
+                            ('fe', HRFeatureEngineer(ordinal_mappings=ordinal_mappings)),
+                            ('prep', preprocessor),
+                            ('model', voting_clf)
+                        ])
+
+                        final_pipeline.fit(X_train_fe, y_train)
+                        
+                        model_scores = {}
+                        for name, model in individual_models.items():
+                            p = Pipeline([('fe', HRFeatureEngineer(ordinal_mappings=ordinal_mappings)), ('prep', preprocessor), ('model', model)])
+                            p.fit(X_train_fe, y_train)
+                            sc = roc_auc_score(y_test, p.predict_proba(X_test_fe)[:, 1])
+                            model_scores[name] = sc
+
+                        st.session_state['trained_pipeline'] = final_pipeline
+                        st.session_state['X_test_fe'] = X_test_fe
+                        st.session_state['y_test'] = y_test
+                        st.session_state['X_test_raw'] = X_test
+                        st.session_state['model_scores'] = model_scores
+                        
+                        st.success("Tüm modeller başarıyla eğitildi!")
+
+        with tab3:
+            st.subheader("Model Karşılaştırma Liderlik Tablosu & Performans")
+            if 'trained_pipeline' in st.session_state:
+                pipeline = st.session_state['trained_pipeline']
+                xtest = st.session_state['X_test_fe']
+                ytest = st.session_state['y_test']
+                
+                threshold = st.slider("İnteraktif Karar Eşiği (Threshold Optimization)", 0.1, 0.9, 0.5, 0.05)
+                
+                y_proba = pipeline.predict_proba(xtest)[:, 1]
+                y_pred_custom = (y_proba >= threshold).astype(int)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Tekli Modellerin ROC-AUC Karşılaştırması:**")
+                    scores_df = pd.DataFrame(list(st.session_state['model_scores'].items()), columns=['Model', 'ROC-AUC'])
+                    voting_auc = roc_auc_score(ytest, y_proba)
+                    scores_df.loc[len(scores_df)] = ['Voting Ensemble (Seçilen)', voting_auc]
+                    scores_df = scores_df.sort_values(by='ROC-AUC', ascending=False)
+                    
+                    fig_bar = px.bar(scores_df, x='Model', y='ROC-AUC', color='ROC-AUC', color_continuous_scale='Blues')
+                    st.plotly_chart(fig_bar, use_container_width=True)
+                    
+                with col2:
+                    st.write("**Modern İnteraktif Karışıklık Matrisi:**")
+                    cm = confusion_matrix(ytest, y_pred_custom)
+                    fig_cm = ff.create_annotated_heatmap(
+                        z=cm, 
+                        x=['Tahmin: 0', 'Tahmin: 1'], 
+                        y=['Gerçek: 0', 'Gerçek: 1'], 
+                        colorscale='Blues'
+                    )
+                    st.plotly_chart(fig_cm, use_container_width=True)
+            else:
+                st.info("⚠️ Lütfen önce modeli eğitin.")
+
+        with tab4:
+            st.subheader("🔍 SHAP Model Açıklanabilirliği")
+            
+            if 'trained_pipeline' in st.session_state:
+                if not SHAP_AVAILABLE:
+                    st.warning("⚠️ SHAP kütüphanesi ortamda eksik. Otomatik yükleniyor, lütfen bekleyin...")
+                    try:
+                        subprocess.check_call([sys.executable, "-m", "pip", "install", "shap"])
+                        import shap
+                        SHAP_AVAILABLE = True
+                        st.success("SHAP başarıyla yüklendi!")
+                    except Exception as e:
+                        st.error(f"SHAP yüklenemedi: {e}")
+
+                if SHAP_AVAILABLE:
+                    if st.button("SHAP Önem Grafiğini Üret"):
+                        with st.spinner("SHAP değerleri hesaplanıyor..."):
+                            model_step = st.session_state['trained_pipeline'].named_steps['model']
+                            prep_step = st.session_state['trained_pipeline'].named_steps['prep']
+                            fe_step = st.session_state['trained_pipeline'].named_steps['fe']
+                            
+                            transformed_data = prep_step.transform(fe_step.transform(X_test))
+                            rf_est = dict(model_step.estimators_).get('rf', None)
+                            if rf_est:
+                                explainer = shap.TreeExplainer(rf_est)
+                                shap_values = explainer.shap_values(transformed_data)
+                                
+                                fig, ax = plt.subplots(figsize=(8, 5))
+                                shap.summary_plot(shap_values[1] if isinstance(shap_values, list) else shap_values, transformed_data, show=False)
+                                st.pyplot(fig)
+                            else:
+                                st.warning("SHAP grafiği için modeller arasına Random Forest eklemelisiniz.")
+            else:
+                st.info("⚠️ Lütfen önce 'Model & Voting Eğitimi' sekmesinden modeli eğitin.")
+
+        with tab5:
+            st.subheader("🎯 Bireysel Çalışan Risk Simülasyonu")
+            if 'trained_pipeline' in st.session_state:
+                sample_idx = st.slider("Test Setinden Çalışan Seçin", 0, len(st.session_state['X_test_raw'])-1, 0)
+                single_row = st.session_state['X_test_raw'].iloc[[sample_idx]]
+                st.dataframe(single_row, use_container_width=True)
+                
+                if st.button("Risk Skorunu Hesapla", type="primary"):
+                    pred_prob = st.session_state['trained_pipeline'].predict_proba(st.session_state['X_test_fe'].iloc[[sample_idx]])[:, 1][0]
+                    
+                    col_m1, col_m2 = st.columns(2)
+                    with col_m1:
+                        st.metric(label="Ayrılma (Churn) Olasılığı", value=f"%{pred_prob*100:.1f}")
+                    with col_m2:
+                        if pred_prob > 0.5:
+                            st.error("⚠️ Yüksek Risk Grubu!")
+                        else:
+                            st.success("✅ Düşük Risk / Güvenli.")
+            else:
+                st.info("Simülasyon için önce modeli eğitmelisiniz.")
+
+        with tab6:
+            st.subheader("📁 Toplu Skorlama ve Rapor İndirme (Batch Prediction)")
+            st.markdown("Yeni veya etiketlenmemiş çalışan verilerinizi yükleyerek tüm şirket için risk skorlarını tek seferde hesaplayın.")
+            batch_file = st.file_uploader("Test / Yeni Veri Seti Yükle (.xlsx / .csv)", type=["xlsx", "csv"], key="batch")
+            
+            if batch_file is not None:
+                df_batch = load_data(batch_file)
+                st.dataframe(df_batch.head(), use_container_width=True)
+                
+                if st.button("Tüm Listeyi Skorla"):
+                    if 'trained_pipeline' in st.session_state:
+                        pipeline = st.session_state['trained_pipeline']
+                        probs = pipeline.predict_proba(df_batch)[:, 1]
+                        df_batch['Ayrilma_Olasiligi'] = [f"%{p*100:.2f}" for p in probs]
+                        df_batch['Risk_Durumu'] = ["Yüksek Risk" if p > 0.5 else "Güvenli" for p in probs]
+                        
+                        st.success("Skorlama tamamlandı!")
+                        st.dataframe(df_batch, use_container_width=True)
+                        
+                        csv = df_batch.to_csv(index=False).encode('utf-8')
+                        st.download_button("📥 Skorlanmış Raporu İndir (CSV)", data=csv, file_name="risk_analiz_raporu.csv", mime="text/csv")
+                    else:
+                        st.error("Önce model eğitimi yapmalısınız!")
+else:
+    st.info("👈 Başlamak için sol menüden veri setinizi yükleyin.")
